@@ -1,0 +1,1866 @@
+// This Pine Script™ code is subject to the terms of the ZigZag OrderBlock Retracement License Agreement.
+// Unauthorized copying, modification, distribution, or use of this code, via any medium, is strictly prohibited.
+// License Agreement is available at: https://ricksimpsontrading.com/license
+// © 2024 RickSimpson. All Rights Reserved.
+//
+// ZigZag OrderBlock Retracement
+// Version: 2.0.0
+// Author:  Rick Simpson
+// Contact: support@ricksimpsontrading.com
+
+//@version=5
+indicator('ZigZag OrderBlock Retracement', 'ZigZag OrderBlock Retracement', true, max_bars_back = 1000, max_lines_count = 500, max_labels_count = 500)
+
+// User Defined Inputs
+showplabels     = input.bool  ( true,           'Display Order Block Price Labels',                                           group = 'Order Block Settings',                               tooltip = 'Enable or disable the display of price labels for detected order blocks on the chart.' )
+waitforclose    = input.bool  ( true,           'Wait for Bar Close Confirmation',                                            group = 'Order Block Settings',                               tooltip = 'Confirm order blocks only after the bar has closed. This reduces false signals.' )
+showzz          = input.bool  ( true,           'Display ZigZag 1',                                                           group = 'ZigZag Settings',                                    tooltip = 'Show or hide the first ZigZag indicator, which tracks significant price swings.' )
+zzlength        = input.int   ( 20,             'ZigZag Length 1',                   minval  = 2,                             group = 'ZigZag Settings',                                    tooltip = 'Defines the length parameter for the first ZigZag indicator, determining its sensitivity to price changes.' )
+zzbearcolor     = input.color ( color.red,    'ZigZag 1 Bearish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bearish segments of the first ZigZag indicator.' )
+zzbullcolor     = input.color ( color.green,  'ZigZag 1 Bullish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bullish segments of the first ZigZag indicator.' )
+zzrangecolor    = input.color ( color.orange, 'ZigZag 1 Range Color',                                                       group = 'ZigZag Settings',                                    tooltip = 'Sets the color for range-bound segments of the first ZigZag indicator.' )
+showzz2         = input.bool  ( true,           'Display ZigZag 2',                                                           group = 'ZigZag Settings',                                    tooltip = 'Show or hide the second ZigZag indicator for additional price swing analysis.' )
+zzlength2       = input.int   ( 40,             'ZigZag Length 2',                   minval  = 2,                             group = 'ZigZag Settings',                                    tooltip = 'Defines the length parameter for the second ZigZag indicator, used for capturing larger price movements.' )
+zzbearcolor2    = input.color ( color.red,    'ZigZag 2 Bearish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bearish segments of the second ZigZag indicator.' )
+zzbullcolor2    = input.color ( color.green,  'ZigZag 2 Bullish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bullish segments of the second ZigZag indicator.' )
+zzrangecolor2   = input.color ( color.orange, 'ZigZag 2 Range Color',                                                       group = 'ZigZag Settings',                                    tooltip = 'Sets the color for range-bound segments of the second ZigZag indicator.' )
+showzz3         = input.bool  ( true,           'Display ZigZag 3',                                                           group = 'ZigZag Settings',                                    tooltip = 'Show or hide the third ZigZag indicator, ideal for identifying longer-term price swings.' )
+zzlength3       = input.int   ( 75,             'ZigZag Length 3',                   minval  = 2,                             group = 'ZigZag Settings',                                    tooltip = 'Defines the length parameter for the third ZigZag indicator, tailored for longer-term price trends.' )
+zzbearcolor3    = input.color ( color.red,    'ZigZag 3 Bearish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bearish segments of the third ZigZag indicator.' )
+zzbullcolor3    = input.color ( color.green,  'ZigZag 3 Bullish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bullish segments of the third ZigZag indicator.' )
+zzrangecolor3   = input.color ( color.orange, 'ZigZag 3 Range Color',                                                       group = 'ZigZag Settings',                                    tooltip = 'Sets the color for range-bound segments of the third ZigZag indicator.' )
+showzz4         = input.bool  ( true,           'Display ZigZag 4',                                                           group = 'ZigZag Settings',                                    tooltip = 'Show or hide the fourth ZigZag indicator for comprehensive swing analysis.' )
+zzlength4       = input.int   ( 125,            'ZigZag Length 4',                   minval  = 2,                             group = 'ZigZag Settings',                                    tooltip = 'Defines the length parameter for the fourth ZigZag indicator, ideal for very long-term price movements.' )
+zzbearcolor4    = input.color ( color.red,    'ZigZag 4 Bearish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bearish segments of the fourth ZigZag indicator.' )
+zzbullcolor4    = input.color ( color.green,  'ZigZag 4 Bullish Color',                                                     group = 'ZigZag Settings',                                    tooltip = 'Sets the color for bullish segments of the fourth ZigZag indicator.' )
+zzrangecolor4   = input.color ( color.orange, 'ZigZag 4 Range Color',                                                       group = 'ZigZag Settings',                                    tooltip = 'Sets the color for range-bound segments of the fourth ZigZag indicator.' )
+zzstyle         = input.string( 'Solid',        'Line Style',                        options = ['Solid', 'Dotted'],           group = 'ZigZag Line Options',                                tooltip = 'Determines the style of lines used in ZigZag indicators.' )
+zzwidth         = input.int   ( 1,              'Line Width',                        minval  = 1, maxval = 3,                 group = 'ZigZag Line Options',                                tooltip = 'Specifies the thickness of lines used in ZigZag indicators.' )
+rline           = input.bool  ( true,           'Display Retracement Lines',                                                  group = 'Retracement Settings',                               tooltip = 'Show or hide the retracement lines, highlighting key price levels.' )
+showprice       = input.bool  ( true,           'Display Retracement Price Labels',                                           group = 'Retracement Settings',                               tooltip = 'Display or hide price labels for the most recent retracement lines.' )
+topcolor        = input.color ( color.red,    'Retracement High Color',                                                     group = 'Retracement Settings',                               tooltip = 'Specifies the color for the highest retracement level lines.' )
+bottomcolor     = input.color ( color.green,  'Retracement Low Color',                                                      group = 'Retracement Settings',                               tooltip = 'Specifies the color for the lowest retracement level lines.' )
+layout          = input.string( 'Wick',         'Line Type',                         options = ['Wick', 'Zone'],              group = 'Retracement Settings',                               tooltip = 'Choose between wick or zone for retracement calculations, affecting line placement.' )
+maxlines        = input.int   ( 10,             'Maximum Number of Lines',           minval  = 1, maxval = 500,               group = 'Retracement Settings',                               tooltip = 'Sets the maximum number of retracement lines to be displayed.' )
+linestyle       = input.string( 'Solid',        'Line Style',                        options = ['Solid', 'Dotted', 'Dashed'], group = 'Retracement Line Options',                           tooltip = 'Select the style of the retracement lines.' )
+linessize       = input.int   ( 1,              'Line Width',                        minval  = 1, maxval = 3,                 group = 'Retracement Line Options',                           tooltip = 'Specifies the width of the retracement lines.' )
+showpivots      = input.bool  ( false,          'Display Pivot Points',                                                       group = 'Pivot Settings',                                     tooltip = 'Enable or disable the display of pivot points on the chart.' )
+zzprice         = input.bool  ( false,          'Display Pivot Levels',                                                       group = 'Pivot Settings',                                     tooltip = 'Show or hide the price levels of pivot points.' )
+zzchannels      = input.bool  ( true,           'Display Cloud Channels',                                                     group = 'Cloud Channel Settings',                             tooltip = 'Show or hide cloud channels based on ZigZag points.' )
+showcclabels    = input.bool  ( true,           'Display Cloud Channel Price Labels',                                         group = 'Cloud Channel Settings',                             tooltip = 'Show or hide price labels for cloud channels.' )
+zzchannelst     = input.float ( 95,             'Cloud Channel Transparency',                                                 group = 'Cloud Channel Settings', inline = 'Channel Options', tooltip = 'Set the transparency for the cloud channels.' )
+highcolor       = input.color ( color.red,    'Cloud Channel High Zone Color',                                              group = 'Cloud Channel Settings',                             tooltip = 'Color for the high zone of the cloud channel.' )
+lowcolor        = input.color ( color.green,  'Cloud Channel Low Zone Color',                                               group = 'Cloud Channel Settings',                             tooltip = 'Color for the low zone of the cloud channel.' )
+middlecolor     = input.color ( color.orange, 'Cloud Channel Middle Zone Color',                                            group = 'Cloud Channel Settings',                             tooltip = 'Color for the middle zone of the cloud channel.' )
+hpzz            = input.bool  ( true,           'Display Harmonic Patterns',                                                  group = 'Harmonic Pattern Settings',                          tooltip = 'Enable or disable the display of harmonic patterns on the chart.' )
+hpbearcolor     = input.color ( color.red,    'Harmonic Bearish Label Color',                                               group = 'Harmonic Pattern Settings',                          tooltip = 'Sets the color for labels of bearish harmonic patterns.' )
+hpbullcolor     = input.color ( color.green,  'Harmonic Bullish Label Color',                                               group = 'Harmonic Pattern Settings',                          tooltip = 'Sets the color for labels of bullish harmonic patterns.' )
+hpcolor         = input.color ( color.red,    'Harmonic Pattern Line Color 1',                                              group = 'Harmonic Pattern Settings',                          tooltip = 'Determines the color of the first set of harmonic pattern lines.' )
+hpcolor2        = input.color ( color.green,  'Harmonic Pattern Line Color 2',                                              group = 'Harmonic Pattern Settings',                          tooltip = 'Determines the color of the second set of harmonic pattern lines.' )
+hpcolor3        = input.color ( color.red,    'Harmonic Pattern Line Color 3',                                              group = 'Harmonic Pattern Settings',                          tooltip = 'Determines the color of the third set of harmonic pattern lines.' )
+hpcolor4        = input.color ( color.green,  'Harmonic Pattern Line Color 4',                                              group = 'Harmonic Pattern Settings',                          tooltip = 'Determines the color of the fourth set of harmonic pattern lines.' )
+hpstyle         = input.string( 'Dotted',       'Harmonic Pattern Line Style',       options = ['Solid', 'Dotted'],           group = 'Harmonic Pattern Line Options',                      tooltip = 'Select the style for harmonic pattern lines.' )
+hpwidth         = input.int   ( 1,              'Harmonic Pattern Line Width',       minval  = 1, maxval = 3,                 group = 'Harmonic Pattern Line Options',                      tooltip = 'Specifies the width of harmonic pattern lines.' )
+zzforecast      = input.bool  ( false,          'Display Trend Lines',                                                        group = 'Trend Line Settings',                                tooltip = 'Enable or disable the display of trend lines based on ZigZag patterns.' )
+pfstyle         = input.string( 'Dashed',       'Line Style',                        options = ['Solid', 'Dashed'],           group = 'Trend Line Options',                                 tooltip = 'Determines the style of trend lines based on ZigZag patterns.' )
+pfwidth         = input.int   ( 2,              'Line Width',                        minval  = 1, maxval = 3,                 group = 'Trend Line Options',                                 tooltip = 'Specifies the width of trend lines.' )
+perc            = input.float ( 0.0,            'Minimum Price Move Percentage',     minval  = 0.0,            step = 0.1,    group = 'Advanced Settings',                                  tooltip = 'Minimum price move percentage required for significant ZigZag points.' )
+errorpercentage = input.int   ( 10,             'Harmonic Pattern Error Margin (%)', minval  = 5, maxval = 20, step = 5,      group = 'Advanced Settings',                                  tooltip = 'Allowed margin of error for harmonic pattern calculations.' )
+obalerts        = input.bool  ( true,           'Enable Order Block Alerts',                                                  group = 'Alerts Setup',                                       tooltip = 'Enable alerts when an order block is detected.' )
+crossalerts     = input.bool  ( false,          'Enable Line Cross Alerts',                                                   group = 'Alerts Setup',                                       tooltip = 'Enable alerts when top or bottom lines are crossed.' )
+chanalerts      = input.bool  ( false,          'Enable Cloud Channel Alerts',                                                group = 'Alerts Setup',                                       tooltip = 'Enable alerts when cloud channel levels are crossed.' )
+hpalerts        = input.bool  ( false,          'Enable Harmonic Pattern Alerts',                                             group = 'Alerts Setup',                                       tooltip = 'Enable alerts when a harmonic pattern is detected.' )
+
+// Initialize and Assign Zone Colors
+highzonescolor  = color(na)
+lowzonescolor   = color(na)
+highzonescolor := topcolor
+lowzonescolor  := bottomcolor
+
+// Initialize ZigZag Variables and Arrays
+var zigzag       = 0
+var zigzag2      = 0
+var zigzag3      = 0
+var zigzag4      = 0
+var close_       = close
+var bar_index_   = bar_index
+var close_y      = array.new_float(1, close    )
+var close_yh     = array.new_float(1, close    )
+var close_yl     = array.new_float(1, close    )
+var bar_index_x  = array.new_int  (1, bar_index)
+var bar_index_xh = array.new_int  (1, bar_index)
+var bar_index_xl = array.new_int  (1, bar_index)
+
+// Define conditions for bearish and bullish retracements for each ZigZag length
+bearishretracement  = (close_ -  close) / close_ * 100 > perc and zigzag  != -1 and close == ta.lowest (close, zzlength )
+bullishretracement  = (close  - close_) / close  * 100 > perc and zigzag  !=  1 and close == ta.highest(close, zzlength )
+bearishretracement2 = (close_ -  close) / close_ * 100 > perc and zigzag2 != -1 and close == ta.lowest (close, zzlength2)
+bullishretracement2 = (close  - close_) / close  * 100 > perc and zigzag2 !=  1 and close == ta.highest(close, zzlength2)
+bearishretracement3 = (close_ -  close) / close_ * 100 > perc and zigzag3 != -1 and close == ta.lowest (close, zzlength3)
+bullishretracement3 = (close  - close_) / close  * 100 > perc and zigzag3 !=  1 and close == ta.highest(close, zzlength3)
+bearishretracement4 = (close_ -  close) / close_ * 100 > perc and zigzag4 != -1 and close == ta.lowest (close, zzlength4)
+bullishretracement4 = (close  - close_) / close  * 100 > perc and zigzag4 !=  1 and close == ta.highest(close, zzlength4)
+
+// Update Close based on ZigZag conditions
+close_     := zigzag  == -1     ? math.min(close[1], close_) : zigzag  == 1 ? math.max(close[1], close_) : close_
+close_     := zigzag2 == -1     ? math.min(close[1], close_) : zigzag2 == 1 ? math.max(close[1], close_) : close_
+close_     := zigzag3 == -1     ? math.min(close[1], close_) : zigzag3 == 1 ? math.max(close[1], close_) : close_
+close_     := zigzag4 == -1     ? math.min(close[1], close_) : zigzag4 == 1 ? math.max(close[1], close_) : close_
+bar_index_ := ta.change(close_) ? bar_index[1] : bar_index_
+
+// Manage ZigZag direction and store retracement data for each configuration
+if bearishretracement      == true or bullishretracement  == true
+    array.push(close_y,          close_    )
+    array.push(bar_index_x,      bar_index_)
+    if bearishretracement  == true
+        zigzag  :=  -1
+        array.push(close_yh,     close_    )
+        array.push(bar_index_xh, bar_index_)
+    if bullishretracement  == true
+        zigzag  :=   1
+        array.push(close_yl,     close_    )
+        array.push(bar_index_xl, bar_index_)
+
+if bearishretracement2     == true or bullishretracement2 == true
+    array.push(close_y,          close_    )
+    array.push(bar_index_x,      bar_index_)
+    if bearishretracement2 == true
+        zigzag2 :=  -1
+        array.push(close_yh,     close_    )
+        array.push(bar_index_xh, bar_index_)
+    if bullishretracement2 == true
+        zigzag2 :=   1
+        array.push(close_yl,     close_    )
+        array.push(bar_index_xl, bar_index_)
+
+if bearishretracement3     == true or bullishretracement3 == true
+    array.push(close_y,          close_    )
+    array.push(bar_index_x,      bar_index_)
+    if bearishretracement3 == true
+        zigzag3 :=  -1
+        array.push(close_yh,     close_    )
+        array.push(bar_index_xh, bar_index_)
+    if bullishretracement3 == true
+        zigzag3 :=   1
+        array.push(close_yl,     close_    )
+        array.push(bar_index_xl, bar_index_)
+
+if bearishretracement4     == true or bullishretracement4 == true
+    array.push(close_y,          close_    )
+    array.push(bar_index_x,      bar_index_)
+    if bearishretracement4 == true
+        zigzag4 :=  -1
+        array.push(close_yh,     close_    )
+        array.push(bar_index_xh, bar_index_)
+    if bullishretracement4 == true
+        zigzag4 :=   1
+        array.push(close_yl,     close_    )
+        array.push(bar_index_xl, bar_index_)
+
+// Initialize variables and arrays for ZigZag 1, including lines, labels, and pivot points
+var deviation         = 0
+var max_array_size    = zzlength
+var zzlines           = array.new_line (0)
+var zigzaglabels      = array.new_label(0)
+var zigzagpercentage  = array.new_float(0)
+var zigzagdir         = array.new_int  (0)
+var zigzagpivots      = array.new_float(0)
+
+// Initialize variables and arrays for ZigZag 2, including lines, labels, and pivot points
+var deviation2        = 0
+var max_array_size2   = zzlength2
+var zzlines2          = array.new_line (0)
+var zigzaglabels2     = array.new_label(0)
+var zigzagpercentage2 = array.new_float(0)
+var zigzagdir2        = array.new_int  (0)
+var zigzagpivots2     = array.new_float(0)
+
+// Initialize variables and arrays for ZigZag 3, including lines, labels, and pivot points
+var deviation3        = 0
+var max_array_size3   = zzlength3
+var zzlines3          = array.new_line (0)
+var zigzaglabels3     = array.new_label(0)
+var zigzagpercentage3 = array.new_float(0)
+var zigzagdir3        = array.new_int  (0)
+var zigzagpivots3     = array.new_float(0)
+
+// Initialize variables and arrays for ZigZag 4, including lines, labels, and pivot points
+var deviation4        = 0
+var max_array_size4   = zzlength4
+var zzlines4          = array.new_line (0)
+var zigzaglabels4     = array.new_label(0)
+var zigzagpercentage4 = array.new_float(0)
+var zigzagdir4        = array.new_int  (0)
+var zigzagpivots4     = array.new_float(0)
+
+// Calculate pivot highs and lows for each ZigZag length based on the highest and lowest bars
+highprice        = close == close ? high : close
+lowprice         = close == close ? low  : close
+float pivothigh  = ta.highestbars(highprice, zzlength ) == 0 ? highprice : na
+float pivotlow   = ta.lowestbars (lowprice,  zzlength ) == 0 ? lowprice  : na
+float pivothigh2 = ta.highestbars(highprice, zzlength2) == 0 ? highprice : na
+float pivotlow2  = ta.lowestbars (lowprice,  zzlength2) == 0 ? lowprice  : na
+float pivothigh3 = ta.highestbars(highprice, zzlength3) == 0 ? highprice : na
+float pivotlow3  = ta.lowestbars (lowprice,  zzlength3) == 0 ? lowprice  : na
+float pivothigh4 = ta.highestbars(highprice, zzlength4) == 0 ? highprice : na
+float pivotlow4  = ta.lowestbars (lowprice,  zzlength4) == 0 ? lowprice  : na
+float ph_        = ta.highestbars(high,      zzlength ) == 0 ? high      : na
+float pl_        = ta.lowestbars (low,       zzlength ) == 0 ? low       : na
+float ph_2       = ta.highestbars(high,      zzlength2) == 0 ? high      : na
+float pl_2       = ta.lowestbars (low,       zzlength2) == 0 ? low       : na
+float ph_3       = ta.highestbars(high,      zzlength3) == 0 ? high      : na
+float pl_3       = ta.lowestbars (low,       zzlength3) == 0 ? low       : na
+float ph_4       = ta.highestbars(high,      zzlength4) == 0 ? high      : na
+float pl_4       = ta.lowestbars (low,       zzlength4) == 0 ? low       : na
+
+// Functions to calculate pivot points and determine direction for each ZigZag length
+pivots(zzlength,  highprice,  lowprice) =>
+    float ph  = ta.highestbars(highprice, zzlength)  == 0 ? highprice : na
+    float pl  = ta.lowestbars (lowprice,  zzlength)  == 0 ? lowprice  : na
+    dir       = 0
+    iff_      = pivotlow   and na(pivothigh)  ? -1 : dir [1]
+    dir      := pivothigh  and na(pivotlow )  ?  1 : iff_
+    [dir, pivothigh, pivotlow]
+
+pivots2(zzlength2, highprice, lowprice) =>
+    float ph2 = ta.highestbars(highprice, zzlength2) == 0 ? highprice : na
+    float pl2 = ta.lowestbars (lowprice,  zzlength2) == 0 ? lowprice  : na
+    dir2      = 0
+    iff_2     = pivotlow2  and na(pivothigh2) ? -1 : dir2[1]
+    dir2     := pivothigh2 and na(pivotlow2 ) ?  1 : iff_2
+    [dir2, pivothigh2, pivotlow2]
+
+pivots3(zzlength3, highprice, lowprice) =>
+    float ph3 = ta.highestbars(highprice, zzlength3) == 0 ? highprice : na
+    float pl3 = ta.lowestbars (lowprice,  zzlength3) == 0 ? lowprice  : na
+    dir3      = 0
+    iff_3     = pivotlow3  and na(pivothigh3) ? -1 : dir3[1]
+    dir3     := pivothigh3 and na(pivotlow3 ) ?  1 : iff_3
+    [dir3, pivothigh3, pivotlow3]
+
+pivots4(zzlength4, highprice, lowprice) =>
+    float ph4 = ta.highestbars(highprice, zzlength) == 0 ? highprice : na
+    float pl4 = ta.lowestbars (lowprice,  zzlength) == 0 ? lowprice  : na
+    dir4      = 0
+    iff_4     = pivotlow4  and na(pivothigh4) ? -1 : dir4[1]
+    dir4     := pivothigh4 and na(pivotlow4 ) ?  1 : iff_4
+    [dir4, pivothigh4, pivotlow4]
+
+// Functions to determine ZigZag direction and corresponding line color for each ZigZag length
+fdir(dir, y2) =>
+    zzdir         = dir
+    if              array.size (zzlines                )  > 0
+        lastline  = array.get  (zzlines,              0)
+        lastpivot = line.get_y1(lastline               )
+        zzdir    := (dir * y2 > dir * lastpivot ? 2 : 1)  * dir
+        zzdir
+    linecolor     = zzdir == 2 ? zzbullcolor : zzdir == 1 ? zzrangecolor : zzdir == -1 ? zzrangecolor : zzbearcolor
+    [zzdir, linecolor]
+
+fdir2(dir2, y2) =>
+    zzdir2         = dir2
+    if               array.size (zzlines2                  )  > 0
+        lastline2  = array.get  (zzlines2,                0)
+        lastpivot2 = line.get_y1(lastline2                 )
+        zzdir2    := (dir2 * y2 > dir2 * lastpivot2 ? 2 : 1)  * dir2
+        zzdir2
+    linecolor2     = zzdir2 == 2 ? zzbullcolor2 : zzdir2 == 1 ? zzrangecolor2 : zzdir2 == -1 ? zzrangecolor2 : zzbearcolor2
+    [zzdir2, linecolor2]
+
+fdir3(dir3, y2) =>
+    zzdir3         = dir3
+    if               array.size (zzlines3                  )  > 0
+        lastline3  = array.get  (zzlines2,                0)
+        lastpivot3 = line.get_y1(lastline3                 )
+        zzdir3    := (dir3 * y2 > dir3 * lastpivot3 ? 2 : 1)  * dir3
+        zzdir3
+    linecolor3     = zzdir3 == 2 ? zzbullcolor3 : zzdir3 == 1 ? zzrangecolor3 : zzdir3 == -1 ? zzrangecolor3 : zzbearcolor3
+    [zzdir3, linecolor3]
+
+fdir4(dir4, y2) =>
+    zzdir4         = dir4
+    if               array.size (zzlines4                  )  > 0
+        lastline4  = array.get  (zzlines4,                0)
+        lastpivot4 = line.get_y1(lastline4                 )
+        zzdir4    := (dir4 * y2 > dir4 * lastpivot4 ? 2 : 1)  * dir4
+        zzdir4
+    linecolor4     = zzdir4 == 2 ? zzbullcolor4 : zzdir4 == 1 ? zzrangecolor4 : zzdir4 == -1 ? zzrangecolor4 : zzbearcolor4
+    [zzdir4, linecolor4]
+
+// Functions to draw ZigZag lines with calculated direction and color for each ZigZag length
+optiontozzlines(x1, y1, x2, y2, dir) =>
+    [zzdir, linecolor]   = fdir(dir,  y2)
+    zigcolor             = showzz  ? linecolor  : color(na)
+    zline                = line.new(x1 = x1, y1 = y1, x2 = x2, y2 = y2, color = zigcolor,  width = zzwidth, style = zzstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+    array.unshift(zzlines, zline)
+
+optiontozzlines2(x1, y1, x2, y2, dir2) =>
+    [zzdir2, linecolor2] = fdir2(dir2, y2)
+    zigcolor2            = showzz2 ? linecolor2 : color(na)
+    zline2               = line.new(x1 = x1, y1 = y1, x2 = x2, y2 = y2, color = zigcolor2, width = zzwidth, style = zzstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+    array.unshift(zzlines2, zline2)
+
+optiontozzlines3(x1, y1, x2, y2, dir3) =>
+    [zzdir3, linecolor3] = fdir3(dir3, y2)
+    zigcolor3            = showzz3 ? linecolor3 : color(na)
+    zline3               = line.new(x1 = x1, y1 = y1, x2 = x2, y2 = y2, color = zigcolor3, width = zzwidth, style = zzstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+    array.unshift(zzlines3, zline3)
+
+optiontozzlines4(x1, y1, x2, y2, dir4) =>
+    [zzdir4, linecolor4] = fdir4(dir4, y2)
+    zigcolor4            = showzz4 ? linecolor4 : color(na)
+    zline4               = line.new(x1 = x1, y1 = y1, x2 = x2, y2 = y2, color = zigcolor4, width = zzwidth, style = zzstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+    array.unshift(zzlines4, zline4)
+
+// Functions to draw ZigZag labels for each ZigZag line, showing pivot points and percentage 
+optiontozzlabels(x1, x2, y1, y2, dir) =>
+    [zzdir, linecolor]  = fdir(dir, y2)
+    pivotlabel          = zzdir == 2 ? 'HH' : zzdir == 1 ? 'LH' : zzdir == -1 ? 'HL' : 'LL'
+    lastlinelength      = 0.0
+    currentlinelength   = math.abs  (y2                    - y1                  )
+    if                    array.size(zzlines                                     ) > 0
+        lastline        = array.get (zzlines,                                   0)
+        lastlinelength := math.abs  (line.get_y2(lastline) - line.get_y1(lastline))
+        lastlinelength
+
+    percentage   = math.round(lastlinelength !=  0 ? currentlinelength / lastlinelength : 0, 3)
+    zztxtlabel   = (showpivots ? pivotlabel : '') + (showpivots and zzprice ? ' - ' : '') + (zzprice ? str.tostring(percentage) : '')
+    yloc         =                          yloc.price
+    zzlabelstyle = dir > 0                ? label.style_label_down : label.style_label_up
+    zzlabelsize  = zzprice and showpivots ? size.normal            : size.small
+    zigzaglabel  = label.new(x = x2, y = y2, text = zztxtlabel, textcolor = chart.fg_color, xloc = xloc.bar_index, yloc = yloc, color = chart.bg_color, size = zzlabelsize, style = zzlabelstyle)
+    if not zzprice and not showpivots
+        label.delete(zigzaglabel                  )
+    array.unshift   (zigzaglabels,     zigzaglabel)
+    array.unshift   (zigzagdir,        zzdir      )
+    array.unshift   (zigzagpercentage, percentage )
+
+optiontozzlabels2(x1, x2, y1, y2, dir2) =>
+    [zzdir2, linecolor2] = fdir2(dir2, y2)
+    pivotlabel2          = zzdir2 == 2 ? 'HH' : zzdir2 == 1 ? 'LH':zzdir2 == -1 ? 'HL' : 'LL'
+    lastlinelength2      = 0.0
+    currentlinelength2   = math.abs  (y2                     - y1                   )
+    if                     array.size(zzlines2                                      ) > 0
+        lastline2        = array.get (zzlines2,                                    0)
+        lastlinelength2 := math.abs  (line.get_y2(lastline2) - line.get_y1(lastline2))
+        lastlinelength2
+
+    percentage2   = math.round(lastlinelength2 !=  0 ? currentlinelength2 / lastlinelength2 : 0, 3)
+    zztxtlabel2   = (showpivots ? pivotlabel2 : '') + (showpivots and zzprice ? ' - ' : '') + (zzprice ? str.tostring(percentage2) : '')
+    yloc2         =                          yloc.price
+    zzlabelstyle2 = dir2 > 0               ? label.style_label_down : label.style_label_up
+    zzlabelsize2  = zzprice and showpivots ? size.normal            : size.small
+    zigzaglabel2  = label.new(x = x2, y = y2, text = zztxtlabel2, textcolor = chart.fg_color, xloc = xloc.bar_index, yloc = yloc2, color = chart.bg_color, size = zzlabelsize2, style = zzlabelstyle2)
+    if not zzprice and not showpivots
+        label.delete(zigzaglabel2                   )
+    array.unshift   (zigzaglabels2,     zigzaglabel2)
+    array.unshift   (zigzagdir2,        zzdir2      )
+    array.unshift   (zigzagpercentage2, percentage2 )
+
+optiontozzlabels3(x1, x2, y1, y2, dir3) =>
+    [zzdir3, linecolor3] = fdir3(dir3, y2)
+    pivotlabel3          = zzdir3 == 2 ? 'HH' : zzdir3 == 1 ? 'LH' : zzdir3 == -1 ? 'HL' : 'LL'
+    lastlinelength3      = 0.0
+    currentlinelength3   = math.abs (y2                     - y1                   )
+    if array.size(zzlines3) > 0
+        lastline3        = array.get(zzlines3,                                    0)
+        lastlinelength3 := math.abs (line.get_y2(lastline3) - line.get_y1(lastline3))
+        lastlinelength3
+
+    percentage3   = math.round(lastlinelength3 !=  0 ? currentlinelength3 / lastlinelength3 : 0, 3)
+    zztxtlabel3   = (showpivots ? pivotlabel3 : '') + (showpivots and zzprice ? ' - ' : '') + (zzprice ? str.tostring(percentage3) : '')
+    yloc3         =                          yloc.price
+    zzlabelstyle3 = dir3 > 0               ? label.style_label_down : label.style_label_up
+    zzlabelsize3  = zzprice and showpivots ? size.normal            : size.small
+    zigzaglabel3  = label.new(x = x2, y = y2, text = zztxtlabel3, textcolor = chart.fg_color, xloc = xloc.bar_index, yloc = yloc3, color = chart.bg_color, size = zzlabelsize3, style = zzlabelstyle3)
+    if not zzprice and not showpivots
+        label.delete(zigzaglabel3                   )
+    array.unshift   (zigzaglabels3,     zigzaglabel3)
+    array.unshift   (zigzagdir3,        zzdir3      )
+    array.unshift   (zigzagpercentage3, percentage3 )
+
+optiontozzlabels4(x1, x2, y1, y2, dir4) =>
+    [zzdir4, linecolor4] = fdir4(dir4, y2)
+    pivotlabel4          = zzdir4 == 2 ? 'HH':zzdir4 == 1 ? 'LH' : zzdir4 == -1 ? 'HL' : 'LL'
+    lastlinelength4      = 0.0
+    currentlinelength4   = math.abs  (y2                     - y1                   )
+    if                     array.size(zzlines4                                      ) > 0
+        lastline4        = array.get (zzlines4,                                    0)
+        lastlinelength4 := math.abs  (line.get_y2(lastline4) - line.get_y1(lastline4))
+        lastlinelength4
+
+    percentage4   = math.round(lastlinelength4 !=  0 ? currentlinelength4 / lastlinelength4 : 0, 3)
+    zztxtlabel4   = (showpivots ? pivotlabel4 : '') + (showpivots and zzprice ? ' - ' : '') + (zzprice ? str.tostring(percentage4) : '')
+    yloc4         =                          yloc.price
+    zzlabelstyle4 = dir4 > 0               ? label.style_label_down : label.style_label_up
+    zzlabelsize4  = zzprice and showpivots ? size.normal            : size.small
+    zigzaglabel4  = label.new(x = x2, y = y2, text = zztxtlabel4, textcolor = chart.fg_color, xloc = xloc.bar_index, yloc = yloc4, color = chart.bg_color, size = zzlabelsize4, style = zzlabelstyle4)
+    if not zzprice and not showpivots
+        label.delete(zigzaglabel4                   )
+    array.unshift   (zigzaglabels4,     zigzaglabel4)
+    array.unshift   (zigzagdir4,        zzdir4      )
+    array.unshift   (zigzagpercentage4, percentage4 )
+
+// Processes ZigZag patterns, drawing lines and labels, and handling direction changes for multiple ZigZag levels
+optiontozz(dir, dirchanged, pivothigh, pivotlow, index, highprice, lowprice) =>
+    zzfound         = dir == 1 ? pivothigh : pivotlow
+    y1              = array.get  (close_y,     0)
+    x1              = array.get  (bar_index_x, 0)
+    x2              = index
+    y2              = zzfound
+    falsedir        = false
+    if                array.size (zzlines       ) > 0
+        lastline    = array.get  (zzlines,     0)
+        lastzzfound = line.get_y2(lastline      )
+        lastIndex   = line.get_x2(lastline      )
+
+        if not dirchanged
+            if dir == 1 and zzfound < lastzzfound or dir == -1 and zzfound > lastzzfound
+                falsedir := true
+                falsedir
+            else
+                line.delete (array.shift(zzlines     ))
+                label.delete(array.shift(zigzaglabels))
+                array.shift (zigzagdir               )
+                array.shift (zigzagpercentage        )
+        if                array.size (zzlines        ) > 0
+            lastline    = array.get  (zzlines,      0)
+            lastzzfound = line.get_y2(lastline       )
+            lastIndex   = line.get_x2(lastline       )
+            x1         := lastIndex
+            y1         := lastzzfound
+            y1
+
+    thresholdviolation = math.abs(y1 - y2) * 100 / y1 > deviation
+    if thresholdviolation and not falsedir
+        optiontozzlabels(x1, x2, y1, y2, dir)
+        optiontozzlines (x1, y1, x2, y2, dir)
+    if array.size(zzlines         ) > max_array_size
+        array.pop(zzlines         )
+        array.pop(zigzaglabels    )
+        array.pop(zigzagdir       )
+        array.pop(zigzagpercentage)
+
+zigzag(zzlength, deviation, highprice, lowprice) =>
+    [dir, pivothigh, pivotlow] = pivots   (zzlength, highprice, lowprice)
+    dirchanged                 = ta.change(dir                          )
+    if pivothigh or pivotlow
+        optiontozz(dir, dirchanged, pivothigh, pivotlow, bar_index, highprice, lowprice)
+
+zigzag(zzlength, deviation, highprice, lowprice)
+array.clear(zigzagpivots)
+startIndex  = waitforclose ? 1 : 0
+if                          array.size (zzlines   ) > startIndex
+    for i   = startIndex to array.size (zzlines   ) - 1 by 1
+        zzl =               array.get  (zzlines, i)
+        y1  =               line.get_y1(zzl       )
+        y2  =               line.get_y2(zzl       )
+        array.unshift(zigzagpivots, y1)
+        array.unshift(zigzagpivots, y2)
+
+optiontozz2(dir2, dirchanged2, pivothigh2, pivotlow2, index2, highprice, lowprice) =>
+    zzfound2         = dir2  ==  1 ? pivothigh2 : pivotlow2
+    y1               = array.get  (close_y,     0)
+    x1               = array.get  (bar_index_x, 0)
+    x2               = index2
+    y2               = zzfound2
+    falsedir2        = false
+    if                 array.size (zzlines2      ) > 0
+        lastline2    = array.get  (zzlines2,    0)
+        lastzzfound2 = line.get_y2(lastline2     )
+        lastIndex2   = line.get_x2(lastline2     )
+
+        if not dirchanged2
+            if dir2 == 1 and zzfound2 < lastzzfound2 or dir2 == -1 and zzfound2 > lastzzfound2
+                falsedir2 := true
+                falsedir2
+            else
+                line.delete (array.shift(zzlines2     ))
+                label.delete(array.shift(zigzaglabels2))
+                array.shift (zigzagdir2               )
+                array.shift (zigzagpercentage2        )
+        if                 array.size (zzlines2       ) > 0
+            lastline2    = array.get  (zzlines2,     0)
+            lastzzfound2 = line.get_y2(lastline2      )
+            lastIndex2   = line.get_x2(lastline2      )
+            x1          := lastIndex2
+            y1          := lastzzfound2
+            y1
+
+    thresholdviolation2 = math.abs(y1 - y2) * 100 / y1 > deviation2
+    if thresholdviolation2 and not falsedir2
+        optiontozzlabels2(x1, x2, y1, y2, dir2)
+        optiontozzlines2 (x1, y1, x2, y2, dir2)
+    if array.size(zzlines2         ) > max_array_size2
+        array.pop(zzlines2         )
+        array.pop(zigzaglabels2    )
+        array.pop(zigzagdir2       )
+        array.pop(zigzagpercentage2)
+
+zigzag2(zzlength2, deviation2, highprice, lowprice) =>
+    [dir2, pivothigh2, pivotlow2] = pivots2  (zzlength2, highprice, lowprice)
+    dirchanged2                   = ta.change(dir2                          )
+    if pivothigh2 or pivotlow2
+        optiontozz2(dir2, dirchanged2, pivothigh2, pivotlow2, bar_index, highprice, lowprice)
+
+zigzag2(zzlength2, deviation2, highprice, lowprice)
+array.clear(zigzagpivots2)
+startIndex2  = waitforclose ? 1 : 0
+if                            array.size (zzlines2   ) > startIndex2
+    for i    = startIndex2 to array.size (zzlines2   ) - 1 by 1
+        zzl2 =                array.get  (zzlines2, i)
+        y1   =                line.get_y1(zzl2       )
+        y2   =                line.get_y2(zzl2       )
+        array.unshift(zigzagpivots2, y1)
+        array.unshift(zigzagpivots2, y2)
+
+optiontozz3(dir3, dirchanged3, pivothigh3, pivotlow3, index3, highprice, lowprice) =>
+    zzfound3         = dir3  ==  1 ? pivothigh3 : pivotlow3
+    y1               = array.get  (close_y,     0)
+    x1               = array.get  (bar_index_x, 0)
+    x2               = index3
+    y2               = zzfound3
+    falsedir3        = false
+    if                 array.size (zzlines3      ) > 0
+        lastline3    = array.get  (zzlines3,    0)
+        lastzzfound3 = line.get_y2(lastline3     )
+        lastIndex3   = line.get_x2(lastline3     )
+
+        if not dirchanged3
+            if dir3 == 1 and zzfound3 < lastzzfound3 or dir3 == -1 and zzfound3 > lastzzfound3
+                falsedir3 := true
+                falsedir3
+            else
+                line.delete (array.shift(zzlines3     ))
+                label.delete(array.shift(zigzaglabels3))
+                array.shift (zigzagdir3               )
+                array.shift (zigzagpercentage3        )
+        if                 array.size (zzlines3       ) > 0
+            lastline3    = array.get  (zzlines3,     0)
+            lastzzfound3 = line.get_y2(lastline3      )
+            lastIndex3   = line.get_x2(lastline3      )
+            x1          := lastIndex3
+            y1          := lastzzfound3
+            y1
+
+    thresholdviolation3 = math.abs(y1 - y2) * 100 / y1 > deviation3
+    if thresholdviolation3 and not falsedir3
+        optiontozzlabels3(x1, x2, y1, y2, dir3)
+        optiontozzlines3 (x1, y1, x2, y2, dir3)
+    if array.size(zzlines3         ) > max_array_size3
+        array.pop(zzlines3         )
+        array.pop(zigzaglabels3    )
+        array.pop(zigzagdir3       )
+        array.pop(zigzagpercentage3)
+
+zigzag3(zzlength3, deviation3, highprice, lowprice) =>
+    [dir3, pivothigh3, pivotlow3] = pivots3  (zzlength3, highprice, lowprice)
+    dirchanged3                   = ta.change(dir3                          )
+    if pivothigh3 or pivotlow3
+        optiontozz3(dir3, dirchanged3, pivothigh3, pivotlow3, bar_index, highprice, lowprice)
+
+zigzag3(zzlength3, deviation3, highprice, lowprice)
+array.clear(zigzagpivots3)
+startIndex3  = waitforclose ? 1 : 0
+if                            array.size (zzlines3   ) > startIndex3
+    for i    = startIndex3 to array.size (zzlines3   ) - 1 by 1
+        zzl3 =                array.get  (zzlines3, i)
+        y1   =                line.get_y1(zzl3       )
+        y2   =                line.get_y2(zzl3       )
+        array.unshift(zigzagpivots3, y1)
+        array.unshift(zigzagpivots3, y2)
+
+optiontozz4(dir4, dirchanged4, pivothigh4, pivotlow4, index4, highprice, lowprice) =>
+    zzfound4         = dir4 == 1 ? pivothigh4 : pivotlow4
+    y1               = array.get  (close_y,     0)
+    x1               = array.get  (bar_index_x, 0)
+    x2               = index4
+    y2               = zzfound4
+    falsedir4        = false
+    if                 array.size (zzlines4      ) > 0
+        lastline4    = array.get  (zzlines4,    0)
+        lastzzfound4 = line.get_y2(lastline4     )
+        lastIndex4   = line.get_x2(lastline4     )
+
+        if not dirchanged4
+            if dir4 == 1 and zzfound4 < lastzzfound4 or dir4 == -1 and zzfound4 > lastzzfound4
+                falsedir4 := true
+                falsedir4
+            else
+                line.delete (array.shift(zzlines4     ))
+                label.delete(array.shift(zigzaglabels4))
+                array.shift (zigzagdir4               )
+                array.shift (zigzagpercentage4        )
+        if                 array.size (zzlines4       ) > 0
+            lastline4    = array.get  (zzlines4,     0)
+            lastzzfound4 = line.get_y2(lastline4      )
+            lastIndex4   = line.get_x2(lastline4      )
+            x1          := lastIndex4
+            y1          := lastzzfound4
+            y1
+
+    thresholdviolation4 = math.abs(y1 - y2) * 100 / y1 > deviation4
+    if thresholdviolation4 and not falsedir4
+        optiontozzlabels4(x1, x2, y1, y2, dir4)
+        optiontozzlines4 (x1, y1, x2, y2, dir4)
+    if array.size(zzlines4         ) > max_array_size4
+        array.pop(zzlines4         )
+        array.pop(zigzaglabels4    )
+        array.pop(zigzagdir4       )
+        array.pop(zigzagpercentage4)
+
+zigzag4(zzlength4, deviation4, highprice, lowprice) =>
+    [dir4, pivothigh4, pivotlow4] = pivots4  (zzlength4, highprice, lowprice)
+    dirchanged4                   = ta.change(dir4                          )
+    if pivothigh4 or pivotlow4
+        optiontozz4(dir4, dirchanged4, pivothigh4, pivotlow4, bar_index, highprice, lowprice)
+
+zigzag4(zzlength4, deviation4, highprice, lowprice)
+array.clear(zigzagpivots4)
+startIndex4  = waitforclose ? 1 : 0
+if                            array.size (zzlines4   ) > startIndex4
+    for i    = startIndex4 to array.size (zzlines4   ) - 1 by 1
+        zzl4 =                array.get  (zzlines4, i)
+        y1   =                line.get_y1(zzl4)
+        y2   =                line.get_y2(zzl4)
+        array.unshift(zigzagpivots4, y1)
+        array.unshift(zigzagpivots4, y2)
+
+// Calculate upper, lower, and middle limits for each ZigZag level based on pivot points
+upper   = array.max(zigzagpivots)
+lower   = array.min(zigzagpivots)
+middle  = (upper  + lower)  / 2
+
+upper2  = array.max(zigzagpivots2)
+lower2  = array.min(zigzagpivots2)
+middle2 = (upper2 + lower2) / 2
+
+upper3  = array.max(zigzagpivots3)
+lower3  = array.min(zigzagpivots3)
+middle3 = (upper3 + lower3) / 2
+
+upper4  = array.max(zigzagpivots4)
+lower4  = array.min(zigzagpivots4)
+middle4 = (upper4 + lower4) / 2
+
+// Assign channel prices (upper, middle, lower) for each ZigZag level based on calculated limits
+var float upperchannelprice   = na
+if upper
+    upperchannelprice        :=  upper
+    upperchannelprice
+var float middlechannelprice  = na
+if middle
+    middlechannelprice       :=  (upper  + lower)  / 2
+    middlechannelprice
+var float lowerchannelprice   = na
+if lower
+    lowerchannelprice        :=  lower
+    lowerchannelprice
+
+var float upperchannelprice2  = na
+if upper2
+    upperchannelprice2       :=  upper2
+    upperchannelprice2
+var float middlechannelprice2 = na
+if middle2
+    middlechannelprice2      :=  (upper2 + lower2) / 2
+    middlechannelprice2
+var float lowerchannelprice2  = na
+if lower2
+    lowerchannelprice2       :=  lower2
+    lowerchannelprice2
+
+var float upperchannelprice3  = na
+if upper3
+    upperchannelprice3       :=  upper3
+    upperchannelprice3
+var float middlechannelprice3 = na
+if middle3
+    middlechannelprice3      :=  (upper3 + lower3) / 2
+    middlechannelprice3
+var float lowerchannelprice3  = na
+if lower3
+    lowerchannelprice3       :=  lower3
+    lowerchannelprice3
+
+var float upperchannelprice4  = na
+if upper4
+    upperchannelprice4       :=  upper4
+    upperchannelprice4
+var float middlechannelprice4 = na
+if middle4
+    middlechannelprice4      :=  (upper4 + lower4) / 2
+    middlechannelprice4
+var float lowerchannelprice4  = na
+if lower4
+    lowerchannelprice4       :=  lower4
+    lowerchannelprice4
+
+// Declare and initialize boolean variables for identifying order blocks, high/low indices for all four ZigZag levels
+var bool bearishob  = na
+var bool bullishob  = na
+var bool highindex  = na
+var bool lowindex   = na
+var bool bearishob2 = na
+var bool bullishob2 = na
+var bool highindex2 = na
+var bool lowindex2  = na
+var bool bearishob3 = na
+var bool bullishob3 = na
+var bool highindex3 = na
+var bool lowindex3  = na
+var bool bearishob4 = na
+var bool bullishob4 = na
+var bool highindex4 = na
+var bool lowindex4  = na
+
+// Calculate and track bearish and bullish Order Blocks for all four ZigZag levels, using confirmation conditions
+bearishob  := nz(bearishob[1])
+bullishob  := nz(bullishob[1])
+bearishob  := array.size(bar_index_xh) > 1 and bearishretracement == true
+bullishob  := array.size(bar_index_xl) > 1 and bullishretracement == true
+highindex  := bearishob == 1
+lowindex   := bullishob == 1
+bearishob  := lowindex[1]  ? 1 : highindex[1]  ? -1 : nz(bearishob[1])
+bullishob  := lowindex[1]  ? 1 : highindex[1]  ? -1 : nz(bullishob[1])
+bearob      = waitforclose ? highindex[1] and nz(bearishob[1]) ==  1 : highindex[0] and nz(bearishob[0]) ==  1
+bullob      = waitforclose ? lowindex [1] and nz(bullishob[1]) == -1 : lowindex [0] and nz(bullishob[0]) == -1
+bearishob2 := nz(bearishob2[1])
+bullishob2 := nz(bullishob2[1])
+bearishob2 := array.size(bar_index_xh) > 1 and bearishretracement2 == true
+bullishob2 := array.size(bar_index_xl) > 1 and bullishretracement2 == true
+highindex2 := bearishob2 == 1
+lowindex2  := bullishob2 == 1
+bearishob2 := lowindex2[1] ? 1 : highindex2[1] ? -1 : nz(bearishob2[1])
+bullishob2 := lowindex2[1] ? 1 : highindex2[1] ? -1 : nz(bullishob2[1])
+bearob2     = waitforclose ? highindex2[1] and nz(bearishob2[1]) ==  1 : highindex2[0] and nz(bearishob2[0]) ==  1
+bullob2     = waitforclose ? lowindex2 [1] and nz(bullishob2[1]) == -1 : lowindex2 [0] and nz(bullishob2[0]) == -1
+bearishob3 := nz(bearishob3[1])
+bullishob3 := nz(bullishob3[1])
+bearishob3 := array.size(bar_index_xh) > 1 and bearishretracement3 == true
+bullishob3 := array.size(bar_index_xl) > 1 and bullishretracement3 == true
+highindex3 := bearishob3 == 1
+lowindex3  := bullishob3 == 1
+bearishob3 := lowindex3[1] ? 1 : highindex3[1] ? -1 : nz(bearishob3[1])
+bullishob3 := lowindex3[1] ? 1 : highindex3[1] ? -1 : nz(bullishob3[1])
+bearob3     = waitforclose ? highindex3[1] and nz(bearishob3[1]) ==  1 : highindex3[0] and nz(bearishob3[0]) ==  1
+bullob3     = waitforclose ? lowindex3 [1] and nz(bullishob3[1]) == -1 : lowindex3 [0] and nz(bullishob3[0]) == -1
+bearishob4 := nz(bearishob4[1])
+bullishob4 := nz(bullishob4[1])
+bearishob4 := array.size(bar_index_xh) > 1 and bearishretracement4 == true
+bullishob4 := array.size(bar_index_xl) > 1 and bullishretracement4 == true
+highindex4 := bearishob4 == 1
+lowindex4  := bullishob4 == 1
+bearishob4 := lowindex4[1] ? 1 : highindex4[1] ? -1 : nz(bearishob4[1])
+bullishob4 := lowindex4[1] ? 1 : highindex4[1] ? -1 : nz(bullishob4[1])
+bearob4     = waitforclose ? highindex4[1] and nz(bearishob4[1]) ==  1 : highindex4[0] and nz(bearishob4[0]) ==  1
+bullob4     = waitforclose ? lowindex4 [1] and nz(bullishob4[1]) == -1 : lowindex4 [0] and nz(bullishob4[0]) == -1
+
+// Store and update current and previous Order Block prices for all four ZigZag levels
+var float bearobprice     = na
+if bearob
+    bearobprice          := high
+    bearobprice
+var float bullobprice     = na
+if bullob
+    bullobprice          := low
+    bullobprice
+
+var float bearobpriceold  = na
+if array.size(bar_index_xh) > 1 and bearishretracement == true
+    bearobpriceold       := high
+    bearobpriceold
+var float bullobpriceold  = na
+if array.size(bar_index_xl) > 1 and bullishretracement == true
+    bullobpriceold       := low
+    bullobpriceold
+
+var float bearobprice2    = na
+if bearob2
+    bearobprice2         := high
+    bearobprice2
+var float bullobprice2    = na
+if bullob2
+    bullobprice2         := low
+    bullobprice2
+
+var float bearobpriceold2 = na
+if array.size(bar_index_xh) > 1 and bearishretracement2 == true
+    bearobpriceold2      := high
+    bearobpriceold2
+var float bullobpriceold2 = na
+if array.size(bar_index_xl) > 1 and bullishretracement2 == true
+    bullobpriceold2      := low
+    bullobpriceold2
+
+var float bearobprice3    = na
+if bearob3
+    bearobprice3         := high
+    bearobprice3
+var float bullobprice3    = na
+if bullob3
+    bullobprice3         := low
+    bullobprice3
+
+var float bearobpriceold3 = na
+if array.size(bar_index_xh) > 1 and bearishretracement3 == true
+    bearobpriceold3      := high
+    bearobpriceold3
+var float bullobpriceold3 = na
+if array.size(bar_index_xl) > 1 and bullishretracement3 == true
+    bullobpriceold3      := low
+    bullobpriceold3
+
+var float bearobprice4    = na
+if bearob4
+    bearobprice4         := high
+    bearobprice4
+var float bullobprice4    = na
+if bullob4
+    bullobprice4         := low
+    bullobprice4
+
+var float bearobpriceold4 = na
+if array.size(bar_index_xh) > 1 and bearishretracement4 == true
+    bearobpriceold4      := high
+    bearobpriceold4
+var float bullobpriceold4 = na
+if array.size(bar_index_xl) > 1 and bullishretracement4 == true
+    bullobpriceold4      := low
+    bullobpriceold4
+
+// Calculate swing highs and lows for all four ZigZag levels using pivot points
+fph  = ta.pivothigh(high, zzlength,  zzlength )
+fpl  = ta.pivotlow (low,  zzlength,  zzlength )
+fph2 = ta.pivothigh(high, zzlength2, zzlength2)
+fpl2 = ta.pivotlow (low,  zzlength2, zzlength2)
+fph3 = ta.pivothigh(high, zzlength3, zzlength3)
+fpl3 = ta.pivotlow (low,  zzlength3, zzlength3)
+fph4 = ta.pivothigh(high, zzlength4, zzlength4)
+fpl4 = ta.pivotlow (low,  zzlength4, zzlength4)
+
+// Identify start and end indices for support and resistance levels based on swing highs and lows for all ZigZag levels
+r1   = ta.valuewhen(not na(fph),  bar_index, 1)
+r2   = ta.valuewhen(not na(fph),  bar_index, 0)
+s1   = ta.valuewhen(not na(fpl),  bar_index, 1)
+s2   = ta.valuewhen(not na(fpl),  bar_index, 0)
+r1_2 = ta.valuewhen(not na(fph2), bar_index, 1)
+r2_2 = ta.valuewhen(not na(fph2), bar_index, 0)
+s1_2 = ta.valuewhen(not na(fpl2), bar_index, 1)
+s2_2 = ta.valuewhen(not na(fpl2), bar_index, 0)
+r1_3 = ta.valuewhen(not na(fph3), bar_index, 1)
+r2_3 = ta.valuewhen(not na(fph3), bar_index, 0)
+s1_3 = ta.valuewhen(not na(fpl3), bar_index, 1)
+s2_3 = ta.valuewhen(not na(fpl3), bar_index, 0)
+r1_4 = ta.valuewhen(not na(fph4), bar_index, 1)
+r2_4 = ta.valuewhen(not na(fph4), bar_index, 0)
+s1_4 = ta.valuewhen(not na(fpl4), bar_index, 1)
+s2_4 = ta.valuewhen(not na(fpl4), bar_index, 0)
+
+// Draw and update trend lines for support and resistance based on ZigZag swing points for all levels
+line upperslope  = zzforecast and showzz  ? line.new(bar_index[bar_index - r1   + zzlength],  fph[bar_index  - r1],   bar_index[bar_index - r2   + zzlength],  fph[bar_index  - r2],   extend = extend.right, color = zzbearcolor,  style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line lowerslope  = zzforecast and showzz  ? line.new(bar_index[bar_index - s1   + zzlength],  fpl[bar_index  - s1],   bar_index[bar_index - s2   + zzlength],  fpl[bar_index  - s2],   extend = extend.right, color = zzbullcolor,  style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line upperslope2 = zzforecast and showzz2 ? line.new(bar_index[bar_index - r1_2 + zzlength2], fph2[bar_index - r1_2], bar_index[bar_index - r2_2 + zzlength2], fph2[bar_index - r2_2], extend = extend.right, color = zzbearcolor2, style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line lowerslope2 = zzforecast and showzz2 ? line.new(bar_index[bar_index - s1_2 + zzlength2], fpl2[bar_index - s1_2], bar_index[bar_index - s2_2 + zzlength2], fpl2[bar_index - s2_2], extend = extend.right, color = zzbullcolor2, style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line upperslope3 = zzforecast and showzz3 ? line.new(bar_index[bar_index - r1_3 + zzlength3], fph3[bar_index - r1_3], bar_index[bar_index - r2_3 + zzlength3], fph3[bar_index - r2_3], extend = extend.right, color = zzbearcolor3, style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line lowerslope3 = zzforecast and showzz3 ? line.new(bar_index[bar_index - s1_3 + zzlength3], fpl3[bar_index - s1_3], bar_index[bar_index - s2_3 + zzlength3], fpl3[bar_index - s2_3], extend = extend.right, color = zzbullcolor3, style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line upperslope4 = zzforecast and showzz4 ? line.new(bar_index[bar_index - r1_4 + zzlength4], fph4[bar_index - r1_4], bar_index[bar_index - r2_4 + zzlength4], fph4[bar_index - r2_4], extend = extend.right, color = zzbearcolor4, style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line lowerslope4 = zzforecast and showzz4 ? line.new(bar_index[bar_index - s1_4 + zzlength4], fpl4[bar_index - s1_4], bar_index[bar_index - s2_4 + zzlength4], fpl4[bar_index - s2_4], extend = extend.right, color = zzbullcolor4, style = pfstyle  ==  'Dashed' ? line.style_dashed : line.style_solid, width = pfwidth) : na
+line.delete(upperslope [1])
+line.delete(lowerslope [1])
+line.delete(upperslope2[1])
+line.delete(lowerslope2[1])
+line.delete(upperslope3[1])
+line.delete(lowerslope3[1])
+line.delete(upperslope4[1])
+line.delete(lowerslope4[1])
+
+// Set maximum values for pivot points and risk/reward ratio
+max_pivot_size = 100
+maxrpr         = 30
+
+// Default pattern detection flags set to true for all supported harmonic patterns
+abcdClassic     = true
+abEQcd          = true
+abcdext         = true
+gartley         = true
+crab            = true
+deepCrab        = true
+bat             = true
+butterfly       = true
+shark           = true
+cypher          = true
+threeDrives     = true
+fiveZero        = true
+doubleBottomTop = true
+
+// Initialize colors for harmonic patterns and directional patterns
+var color hpzzcolor           = hpcolor
+var color hpzzcolor2          = hpcolor2
+var color hpzzcolor3          = hpcolor3
+var color hpzzcolor4          = hpcolor4
+var color bearishpatterncolor = hpbearcolor
+var color bullishpatterncolor = hpbullcolor
+
+// Initialize arrays for storing pivot points, harmonic lines, pattern types, and labels
+var hpzigzagpivotspattern  = array.new_float(0        )
+var hpzigzagpivotsbar      = array.new_int  (0        )
+var hpzigzagpivotshpdir    = array.new_int  (0        )
+var hpzigzagpivotspattern2 = array.new_float(0        )
+var hpzigzagpivotsbar2     = array.new_int  (0        )
+var zigzagpivothpdirs2     = array.new_int  (0        )
+var hpzigzagpivotspattern3 = array.new_float(0        )
+var hpzigzagpivotsbar3     = array.new_int  (0        )
+var zigzagpivothpdirs3     = array.new_int  (0        )
+var hpzigzagpivotspattern4 = array.new_float(0        )
+var hpzigzagpivotsbar4     = array.new_int  (0        )
+var zigzagpivothpdirs4     = array.new_int  (0        )
+var hplines                = array.new_line (8        )
+var hptype                 = array.new_int  (2,  1    )
+var hplabels               = array.new_bool (13, false)
+var hplabel                = array.new_label(1        )
+var hplines2               = array.new_line (8        )
+var hptype2                = array.new_int  (2,  1    )
+var hplabels2              = array.new_bool (13, false)
+var hplabel2               = array.new_label(1        )
+var hplines3               = array.new_line (8        )
+var hptype3                = array.new_int  (2,  1    )
+var hplabels3              = array.new_bool (13, false)
+var hplabel3               = array.new_label(1)
+var hplines4               = array.new_line (8        )
+var hptype4                = array.new_int  (2,  1    )
+var hplabels4              = array.new_bool (13, false)
+var hplabel4               = array.new_label(1        )
+
+// Calculate error tolerance ranges for harmonic pattern detection
+maxerrperc = (100 + errorpercentage) / 100
+minerrperc = (100 - errorpercentage) / 100
+
+// Function to calculate pivots for a given length
+hp_pivots(length)  =>
+    float hp_phigh = ta.highestbars(high, length) == 0 ? high : na
+    float hp_plow  = ta.lowestbars (low,  length) == 0 ? low  : na
+    hpdir          = 0
+    hpiff_1        = hp_plow  and na(hp_phigh) ? -1 : hpdir[1]
+    hpdir         := hp_phigh and na(hp_plow)  ?  1 : hpiff_1
+    [hpdir, hp_phigh, hp_plow]
+
+// Performs zigzag calculation based on direction changes and updates pivot arrays
+hp_zigzag(length, hpzigzagpivots, hpzigzagpivotsbar, zigzagpivothpdirs)  =>
+    [hpdir, hp_phigh, hp_plow] = hp_pivots(length)
+    hphpdirchanged             = ta.change(hpdir )
+
+    if hp_phigh or hp_plow
+        hpdirvalue      = hpdir == 1 ? hp_phigh : hp_plow
+        bar             = bar_index
+        newhpdir        = hpdir
+        if not hphpdirchanged and array.size (hpzigzagpivots   ) >= 1
+            pivot       =         array.shift(hpzigzagpivots   )
+            pivotbar    =         array.shift(hpzigzagpivotsbar)
+            pivothpdir  =         array.shift(zigzagpivothpdirs)
+            newvalue    = hpdirvalue * pivothpdir < pivot * pivothpdir
+            hpdirvalue := newvalue ? pivot    : hpdirvalue
+            bar        := newvalue ? pivotbar : bar
+            bar
+
+        if array.size(hpzigzagpivots) >= 2
+            lastpp    = array.get(hpzigzagpivots, 1)
+            newhpdir := hpdir * hpdirvalue > hpdir * lastpp ? hpdir * 2 : hpdir
+            newhpdir
+
+        array.unshift(hpzigzagpivots,    value = hpdirvalue)
+        array.unshift(hpzigzagpivotsbar, bar               )
+        array.unshift(zigzagpivothpdirs, newhpdir          )
+
+        if array.size(hpzigzagpivots   ) > max_pivot_size
+            array.pop(hpzigzagpivots   )
+            array.pop(hpzigzagpivotsbar)
+            array.pop(zigzagpivothpdirs)
+
+harmoniclabel(hplabels, hpdir, price, bar) =>
+    gartley      = array.get(hplabels, 0 )
+    crab         = array.get(hplabels, 1 )
+    deepcrab     = array.get(hplabels, 2 )
+    bat          = array.get(hplabels, 3 )
+    butterfly    = array.get(hplabels, 4 )
+    shark        = array.get(hplabels, 5 )
+    cypher       = array.get(hplabels, 6 )
+    threedrives  = array.get(hplabels, 7 )
+    fivezero     = array.get(hplabels, 8 )
+    abcd         = array.get(hplabels, 9 )
+    abeqcd       = array.get(hplabels, 10)
+    abcdext      = array.get(hplabels, 11)
+    doubletop    = array.get(hplabels, 12) and hpdir < 0
+    doublebottom = array.get(hplabels, 12) and hpdir > 0
+
+    // Creates a label with the detected harmonic pattern names
+    hplabeltext  = gartley                      ? 'Gartley'                                            : ''
+    hplabeltext := hplabeltext + (crab         ? (hplabeltext == '' ? '' : '\n') + 'Crab'           : '')
+    hplabeltext := hplabeltext + (deepcrab     ? (hplabeltext == '' ? '' : '\n') + 'Deep Crab'      : '')
+    hplabeltext := hplabeltext + (bat          ? (hplabeltext == '' ? '' : '\n') + 'Bat'            : '')
+    hplabeltext := hplabeltext + (butterfly    ? (hplabeltext == '' ? '' : '\n') + 'Butterfly'      : '')
+    hplabeltext := hplabeltext + (shark        ? (hplabeltext == '' ? '' : '\n') + 'Shark'          : '')
+    hplabeltext := hplabeltext + (cypher       ? (hplabeltext == '' ? '' : '\n') + 'Cypher'         : '')
+    hplabeltext := hplabeltext + (threedrives  ? (hplabeltext == '' ? '' : '\n') + '3 Drive'        : '')
+    hplabeltext := hplabeltext + (fivezero     ? (hplabeltext == '' ? '' : '\n') + '5-0'            : '')
+    hplabeltext := hplabeltext + (abcd         ? (hplabeltext == '' ? '' : '\n') + 'ABCD'           : '')
+    hplabeltext := hplabeltext + (abeqcd       ? (hplabeltext == '' ? '' : '\n') + 'AB = CD'        : '')
+    hplabeltext := hplabeltext + (abcdext      ? (hplabeltext == '' ? '' : '\n') + 'ABCD Extension' : '')
+    hplabeltext := hplabeltext + (doubletop    ? (hplabeltext == '' ? '' : '\n') + 'Double Top'     : '')
+    hplabeltext := hplabeltext + (doublebottom ? (hplabeltext == '' ? '' : '\n') + 'Double Bottom'  : '')
+    hpdircolor   = hpdir > 0 ? bullishpatterncolor : bearishpatterncolor
+    hplabel      = label.new(x = bar, y = price, yloc = yloc.price, text = hplabeltext, textcolor = color.white, color = hpdircolor, style = hpdir < 1 ? label.style_label_down : label.style_label_up, size = size.small)
+    hplabel
+
+// Function to detect various harmonic patterns, initializes variables and checks conditions
+hpdetection(hpzigzagpivots, hpzigzagpivotsbar, zigzagpivothpdirs, hplines, hplabel, hptype, hplabels, zzcolor, hpwidth, hpstyle, showzz) =>
+    startvalue = waitforclose ? 1 : 0
+
+    // Initialize variables for harmonic pattern detection
+    hp_pattern    = false
+    abcdpattern   = false
+    doublepattern = false
+
+    // Harmonic pattern point extraction and ratio calculations
+    if array.size(hpzigzagpivots) >= 6 + startvalue and showzz
+
+        d                = array.get(hpzigzagpivots,    startvalue + 0)
+        d_bar            = array.get(hpzigzagpivotsbar, startvalue + 0)
+        d_hpdir          = array.get(zigzagpivothpdirs, startvalue + 0)
+
+        c                = array.get(hpzigzagpivots,    startvalue + 1)
+        c_bar            = array.get(hpzigzagpivotsbar, startvalue + 1)
+        c_hpdir          = array.get(zigzagpivothpdirs, startvalue + 1)
+
+        b                = array.get(hpzigzagpivots,    startvalue + 2)
+        b_bar            = array.get(hpzigzagpivotsbar, startvalue + 2)
+        b_hpdir          = array.get(zigzagpivothpdirs, startvalue + 2)
+
+        a                = array.get(hpzigzagpivots,    startvalue + 3)
+        a_bar            = array.get(hpzigzagpivotsbar, startvalue + 3)
+        a_hpdir          = array.get(zigzagpivothpdirs, startvalue + 3)
+
+        hpx              = array.get(hpzigzagpivots,    startvalue + 4)
+        x_bar            = array.get(hpzigzagpivotsbar, startvalue + 4)
+        x_hpdir          = array.get(zigzagpivothpdirs, startvalue + 4)
+
+        hpy              = array.get(hpzigzagpivots,    startvalue + 5)
+        y_bar            = array.get(hpzigzagpivotsbar, startvalue + 5)
+        y_hpdir          = array.get(zigzagpivothpdirs, startvalue + 5)
+
+        highpoint        = math.max(hpx, a, b, c, d)
+        lowpoint         = math.min(hpx, a, b, c, d)
+        hpdir            = c > d ? 1 : -1
+
+        xabratio         = math.abs(b     -     a) / math.abs(hpx -   a)
+        abcratio         = math.abs(c     -     b) / math.abs(a   -   b)
+        bcdratio         = math.abs(d     -     c) / math.abs(b   -   c)
+        xadratio         = math.abs(d     -     a) / math.abs(hpx -   a)
+        yxaratio         = math.abs(a     -   hpx) / math.abs(hpy - hpx)
+        abtime           = math.abs(a_bar - b_bar)
+        cdtime           = math.abs(c_bar - d_bar)
+        abprice          = math.abs(a     -     b)
+        cdprice          = math.abs(c     -     d)
+
+        time_ratio       = cdtime     / abtime
+        price_ratio      = cdprice    / abprice
+        abcd_hpdirection = a < b and a < c and c < b and c < d and a < d and b < d ? 1 : a > b and a > c and c > b and c > d and a > d and b > d ? -1 : 0
+        risk             = math.abs     (b    -      d)
+        reward           = math.abs     (c    -      d)
+        rpr              = risk * 100 / (risk + reward)
+
+        if b < highpoint and b > lowpoint
+
+            // Gartley pattern detection logic with tolerance checks
+            if hpzz and gartley and xabratio >= 0.618 * minerrperc and xabratio <= 0.618 * maxerrperc and abcratio >= 0.382 * minerrperc and abcratio <= 0.886 * maxerrperc and (bcdratio >= 1.272 * minerrperc and bcdratio <= 1.618 * maxerrperc or xadratio >= 0.786 * minerrperc and xadratio <= 0.786 * maxerrperc)
+                hp_pattern :=  true
+                array.set(hplabels, 0,  true)
+            else
+                array.set(hplabels, 0, false)
+
+            // Crab pattern detection logic with tolerance checks
+            if hpzz and crab and xabratio >= 0.382 * minerrperc and xabratio <= 0.618 * maxerrperc and abcratio >= 0.382 * minerrperc and abcratio <= 0.886 * maxerrperc and (bcdratio >= 2.24 * minerrperc and bcdratio <= 3.618 * maxerrperc or xadratio >= 1.618 * minerrperc and xadratio <= 1.618 * maxerrperc)
+                hp_pattern :=  true
+                array.set(hplabels, 1,  true)
+            else
+                array.set(hplabels, 1, false)
+
+            // Deep Crab pattern detection logic with tolerance checks
+            if hpzz and deepCrab and xabratio >= 0.886 * minerrperc and xabratio <= 0.886 * maxerrperc and abcratio >= 0.382 * minerrperc and abcratio <= 0.886 * maxerrperc and (bcdratio >= 2.00 * minerrperc and bcdratio <= 3.618 * maxerrperc or xadratio >= 1.618 * minerrperc and xadratio <= 1.618 * maxerrperc)
+                hp_pattern :=  true
+                array.set(hplabels, 2,  true)
+            else
+                array.set(hplabels, 2, false)
+
+            // Bat pattern detection logic with specified ratio checks and error tolerance
+            if hpzz and bat and xabratio >= 0.382 * minerrperc and xabratio <= 0.50 * maxerrperc and abcratio >= 0.382 * minerrperc and abcratio <= 0.886 * maxerrperc and (bcdratio >= 1.618 * minerrperc and bcdratio <= 2.618 * maxerrperc or xadratio >= 0.886 * minerrperc and xadratio <= 0.886 * maxerrperc)
+                hp_pattern :=  true
+                array.set(hplabels, 3,  true)
+            else
+                array.set(hplabels, 3, false)
+
+            // Butterfly pattern detection with specific ratio validation and error tolerance
+            if hpzz and butterfly and xabratio >= 0.786 * minerrperc and xabratio <= 0.786 * maxerrperc and abcratio >= 0.382 * minerrperc and abcratio <= 0.886 * maxerrperc and (bcdratio >= 1.618 * minerrperc and bcdratio <= 2.618 * maxerrperc or xadratio >= 1.272 * minerrperc and xadratio <= 1.618 * maxerrperc)
+                hp_pattern :=  true
+                array.set(hplabels, 4,  true)
+            else
+                array.set(hplabels, 4, false)
+
+            // Shark pattern detection with ratio checks for ABC, BCD, and XAD legs
+            if hpzz and shark and abcratio >= 1.13 * minerrperc and abcratio <= 1.618 * maxerrperc and bcdratio >= 1.618 * minerrperc and bcdratio <= 2.24 * maxerrperc and xadratio >= 0.886 * minerrperc and xadratio <= 1.13 * maxerrperc
+                hp_pattern :=  true
+                array.set(hplabels, 5,  true)
+            else
+                array.set(hplabels, 5, false)
+
+            // Cypher pattern detection with strict ratio checks for XAB, ABC, BCD, and XAD legs
+            if hpzz and cypher and xabratio >= 0.382 * minerrperc and xabratio <= 0.618 * maxerrperc and abcratio >= 1.13 * minerrperc and abcratio <= 1.414 * maxerrperc and (bcdratio >= 1.272 * minerrperc and bcdratio <= 2.00 * maxerrperc or xadratio >= 0.786 * minerrperc and xadratio <= 0.786 * maxerrperc)
+                hp_pattern :=  true
+                array.set(hplabels, 6,  true)
+            else
+                array.set(hplabels, 6, false)
+
+        // Three Drives pattern detection based on precise YXA, XAB, ABC, and BCD ratios
+        if hpzz and threeDrives and yxaratio >= 0.618 * minerrperc and yxaratio <= 0.618 * maxerrperc and xabratio >= 1.27 * minerrperc and xabratio <= 1.618 * maxerrperc and abcratio >= 0.618 * minerrperc and abcratio <= 0.618 * maxerrperc and bcdratio >= 1.27 * minerrperc and bcdratio <= 1.618 * maxerrperc
+            hp_pattern     :=  true
+            array.set(hplabels,     7,  true)
+        else
+            array.set(hplabels,     7, false)
+
+        /// Five-0 pattern detection using XAB, ABC, and BCD ratio criteria
+        if hpzz and fiveZero and xabratio >= 1.13 * minerrperc and xabratio <= 1.618 * maxerrperc and abcratio >= 1.618 * minerrperc and abcratio <= 2.24 * maxerrperc and bcdratio >= 0.5 * minerrperc and bcdratio <= 0.5 * maxerrperc
+            hp_pattern     :=  true
+            array.set(hplabels,     8,  true)
+        else
+            array.set(hplabels,     8, false)
+
+        //Classic ABCD Calculation
+
+        if hpzz and abcdClassic and abcratio >= 0.618 * minerrperc and abcratio <= 0.786 * maxerrperc and bcdratio >= 1.272 * minerrperc and bcdratio <= 1.618 * maxerrperc and abcd_hpdirection != 0
+            abcdpattern    :=  true
+            array.set(hplabels,     9,  true)
+        else
+            array.set(hplabels,     9, false)
+
+        // Classic ABCD pattern detection based on ABC and BCD ratio criteria with directional validation
+        if hpzz and abEQcd and time_ratio >= minerrperc and time_ratio <= maxerrperc and price_ratio >= minerrperc and price_ratio <= maxerrperc and abcd_hpdirection != 0
+            abcdpattern    :=  true
+            array.set(hplabels,    10,  true)
+        else
+            array.set(hplabels,    10, false)
+
+        // ABCD Extension pattern detection using price ratio, ABC ratio, and directional validation
+        if hpzz and abcdext and price_ratio >= 1.272 * minerrperc and price_ratio <= 1.618 * maxerrperc and abcratio >= 0.618 * minerrperc and abcratio <= 0.786 * maxerrperc and abcd_hpdirection != 0
+            abcdpattern    :=  true
+            array.set(hplabels,    11,  true)
+        else
+            array.set(hplabels,    11, false)
+
+        // Detect Double Top/Bottom pattern based on direction and risk/reward ratio
+        if hpzz and doubleBottomTop and (d_hpdir == 1 and b_hpdir == 2 and c_hpdir == -1 or d_hpdir == -1 and b_hpdir == -2 and c_hpdir == 1) and rpr < maxrpr
+            doublepattern  :=  true
+            array.set(hplabels,    12,  true)
+        else
+            array.set(hplabels,    12, false)
+
+        // Initialize flags for removal of XA, AB, and CD segments of the pattern
+        remove_w = false
+        remove_a = false
+        remove_d = false
+
+        // Remove existing harmonic pattern lines and labels if the same pattern is detected consecutively
+        if hpzz and hp_pattern[1] and hpx == hpx[1] and a == a[1] and b == b[1] and c == c[1]
+            line.delete (array.get(hplines, 0))
+            line.delete (array.get(hplines, 1))
+            line.delete (array.get(hplines, 2))
+            line.delete (array.get(hplines, 3))
+            line.delete (array.get(hplines, 4))
+            line.delete (array.get(hplines, 5))
+            line.delete (array.get(hplines, 6))
+            line.delete (array.get(hplines, 7))
+            label.delete(array.get(hplabel, 0))
+            remove_w := true
+            remove_w
+
+        // Remove existing ABCD pattern lines and labels if the same pattern is detected consecutively
+        if hpzz and abcdpattern[1] and a == a[1] and b == b[1] and c == c[1]
+            line.delete (array.get(hplines, 1))
+            line.delete (array.get(hplines, 2))
+            line.delete (array.get(hplines, 3))
+            label.delete(array.get(hplabel, 0))
+            remove_a := true
+            remove_a
+
+        // Remove existing Double Bottom/Top pattern lines and labels if the same pattern is detected consecutively
+        if hpzz and doublepattern[1] and a == a[1] and b == b[1] and c == c[1]
+            line.delete (array.get(hplines, 5))
+            label.delete(array.get(hplabel, 0))
+            remove_d := true
+            remove_d
+
+        // Draw harmonic pattern lines if a pattern is detected and store them in the harmonicLines array
+        if hpzz and hp_pattern
+            xa = line.new(y1 = hpx, y2 = a, x1 = x_bar, x2 = a_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            ab = line.new(y1 = a,   y2 = b, x1 = a_bar, x2 = b_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            bc = line.new(y1 = b,   y2 = c, x1 = b_bar, x2 = c_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            cd = line.new(y1 = c,   y2 = d, x1 = c_bar, x2 = d_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            xb = line.new(y1 = hpx, y2 = b, x1 = x_bar, x2 = b_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            bd = line.new(y1 = b,   y2 = d, x1 = b_bar, x2 = d_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            xd = line.new(y1 = hpx, y2 = d, x1 = x_bar, x2 = d_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            ac = line.new(y1 = a,   y2 = c, x1 = a_bar, x2 = c_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            array.set(hplines, 0, xa   )
+            array.set(hplines, 1, ab   )
+            array.set(hplines, 2, bc   )
+            array.set(hplines, 3, cd   )
+            array.set(hplines, 4, xb   )
+            array.set(hplines, 5, bd   )
+            array.set(hplines, 6, xd   )
+            array.set(hplines, 7, ac   )
+            array.set(hptype,  0, hpdir)
+
+        // Draw AB = CD pattern lines if detected and no harmonic pattern is present, storing them in the harmonicLines array
+        if hpzz and abcdpattern and not hp_pattern
+            ab = line.new(y1 = a, y2 = b, x1 = a_bar, x2 = b_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            bc = line.new(y1 = b, y2 = c, x1 = b_bar, x2 = c_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            cd = line.new(y1 = c, y2 = d, x1 = c_bar, x2 = d_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            array.set(hplines, 1, ab   )
+            array.set(hplines, 2, bc   )
+            array.set(hplines, 3, cd   )
+            array.set(hptype,  0, hpdir)
+
+        // Draw double top/bottom pattern line if detected and no harmonic pattern is present, storing it in the harmonicLines array
+        if hpzz and doublepattern and not hp_pattern
+            bd = line.new(y1 = b, y2 = d, x1 = b_bar, x2 = d_bar, color = zzcolor, width = hpwidth, style = hpstyle  ==  'Solid' ? line.style_solid : line.style_dotted)
+            array.set(hplines, 5, bd   )
+            array.set(hptype,  0, hpdir)
+
+        // Create and store a harmonic label if any pattern is detected (harmonic, AB = CD, or double top/bottom)
+        if hpzz and hp_pattern or abcdpattern or doublepattern
+            array.set(hplabel, 0, harmoniclabel(hplabels, hpdir, d, d_bar))
+
+    // Detect new pattern occurrence by checking if the current pattern is different from the previous one
+    pattern = hp_pattern and not hp_pattern[1] or abcdpattern and not abcdpattern[1] or doublepattern and not doublepattern[1]
+    pattern
+
+// Perform ZigZag calculations for each length and update pivot points, bars, and directions
+hp_zigzag(zzlength,  hpzigzagpivotspattern,  hpzigzagpivotsbar,  hpzigzagpivotshpdir)
+hp_zigzag(zzlength2, hpzigzagpivotspattern2, hpzigzagpivotsbar2, zigzagpivothpdirs2 )
+hp_zigzag(zzlength3, hpzigzagpivotspattern3, hpzigzagpivotsbar3, zigzagpivothpdirs3 )
+hp_zigzag(zzlength4, hpzigzagpivotspattern4, hpzigzagpivotsbar4, zigzagpivothpdirs4 )
+
+// Detect harmonic patterns for each ZigZag length and update labels, lines, and pattern types accordingly
+hp_pattern1 = hpdetection(hpzigzagpivotspattern,  hpzigzagpivotsbar,  hpzigzagpivotshpdir, hplines,  hplabel,  hptype,  hplabels,  hpzzcolor,  hpwidth, hpstyle, showzz )
+hp_pattern2 = hpdetection(hpzigzagpivotspattern2, hpzigzagpivotsbar2, zigzagpivothpdirs2,  hplines2, hplabel2, hptype2, hplabels2, hpzzcolor2, hpwidth, hpstyle, showzz2)
+hp_pattern3 = hpdetection(hpzigzagpivotspattern3, hpzigzagpivotsbar3, zigzagpivothpdirs3,  hplines3, hplabel3, hptype3, hplabels3, hpzzcolor3, hpwidth, hpstyle, showzz3)
+hp_pattern4 = hpdetection(hpzigzagpivotspattern4, hpzigzagpivotsbar4, zigzagpivothpdirs4,  hplines4, hplabel4, hptype4, hplabels4, hpzzcolor4, hpwidth, hpstyle, showzz4)
+
+// Trigger alerts if any harmonic pattern is detected based on user settings
+if hpalerts and hp_pattern1 or hpalerts and hp_pattern2 or hpalerts and hp_pattern3 or hpalerts and hp_pattern4
+    alert('New Harmonic Pattern Detected! At ' + str.tostring(close), alert.freq_once_per_bar)
+
+// Plot cloud channels for each ZigZag level with conditional transparency and color fills
+upperchannel   = plot(zzchannels and showzz  ? upper   : na, title = 'Upper',    color = color.new(highcolor,   50), linewidth = 1, style = plot.style_linebr)
+middlechannel  = plot(zzchannels and showzz  ? middle  : na, title = 'Middle',   color = color.new(middlecolor, 50), linewidth = 1, style = plot.style_linebr)
+lowerchannel   = plot(zzchannels and showzz  ? lower   : na, title = 'Lower',    color = color.new(lowcolor,    50), linewidth = 1, style = plot.style_linebr)
+fill(upperchannel,   middlechannel,  title = 'Upper',   color = color.new(highcolor, zzchannelst))
+fill(middlechannel,  lowerchannel,   title = 'Lower',   color = color.new(lowcolor,  zzchannelst))
+
+upperchannel2  = plot(zzchannels and showzz2 ? upper2  : na, title = 'Upper 2',  color = color.new(highcolor,   50), linewidth = 1, style = plot.style_linebr)
+middlechannel2 = plot(zzchannels and showzz2 ? middle2 : na, title = 'Middle 2', color = color.new(middlecolor, 50), linewidth = 1, style = plot.style_linebr)
+lowerchannel2  = plot(zzchannels and showzz2 ? lower2  : na, title = 'lower 2',  color = color.new(lowcolor,    50), linewidth = 1, style = plot.style_linebr)
+fill(upperchannel2,  middlechannel2, title = 'Upper 2', color = color.new(highcolor, zzchannelst))
+fill(middlechannel2, lowerchannel2,  title = 'Lower 2', color = color.new(lowcolor,  zzchannelst))
+
+upperchannel3  = plot(zzchannels and showzz3 ? upper3  : na, title = 'Lower 3',  color = color.new(highcolor,   50), linewidth = 1, style = plot.style_linebr)
+middlechannel3 = plot(zzchannels and showzz3 ? middle3 : na, title = 'Middle 3', color = color.new(middlecolor, 50), linewidth = 1, style = plot.style_linebr)
+lowerchannel3  = plot(zzchannels and showzz3 ? lower3  : na, title = 'Bottom 3', color = color.new(lowcolor,    50), linewidth = 1, style = plot.style_linebr)
+fill(upperchannel3,  middlechannel3, title = 'Upper 3', color = color.new(highcolor, zzchannelst))
+fill(middlechannel3, lowerchannel3,  title = 'Lower 3', color = color.new(lowcolor,  zzchannelst))
+
+upperchannel4  = plot(zzchannels and showzz4 ? upper4  : na, title = 'Upper 4',  color = color.new(highcolor,   50), linewidth = 1, style = plot.style_linebr)
+middlechannel4 = plot(zzchannels and showzz4 ? middle4 : na, title = 'Middle 4', color = color.new(middlecolor, 50), linewidth = 1, style = plot.style_linebr)
+lowerchannel4  = plot(zzchannels and showzz4 ? lower4  : na, title = 'lower 4',  color = color.new(lowcolor,    50), linewidth = 1, style = plot.style_linebr)
+fill(upperchannel4,  middlechannel4, title = 'Upper 4', color = color.new(highcolor, zzchannelst))
+fill(middlechannel4, lowerchannel4,  title = 'Lower 4', color = color.new(lowcolor,  zzchannelst))
+
+// Manage labels for displaying the upper, middle, and lower channel prices across all ZigZag settings
+if showcclabels and showzz  and zzchannels
+    l1  = label.new(bar_index, upperchannelprice,   'Upper Channel 1 - '  + str.tostring(math.round_to_mintick(upperchannelprice)),   color = color(na), textcolor = highcolor,   style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l1
+    label.delete(l1 [1])
+if showcclabels and showzz2 and zzchannels
+    l2  = label.new(bar_index, upperchannelprice2,  'Upper Channel 2 - '  + str.tostring(math.round_to_mintick(upperchannelprice2)),  color = color(na), textcolor = highcolor,   style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l2
+    label.delete(l2 [1])
+if showcclabels and showzz3 and zzchannels
+    l3  = label.new(bar_index, upperchannelprice3,  'Upper Channel 3 - '  + str.tostring(math.round_to_mintick(upperchannelprice3)),  color = color(na), textcolor = highcolor,   style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l3
+    label.delete(l3 [1])
+if showcclabels and showzz4 and zzchannels
+    l4  = label.new(bar_index, upperchannelprice4,  'Upper Channel 4 - '  + str.tostring(math.round_to_mintick(upperchannelprice4)),  color = color(na), textcolor = highcolor,   style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l4
+    label.delete(l4 [1])
+if showcclabels and showzz  and zzchannels
+    l5  = label.new(bar_index, middlechannelprice,  'Middle Channel 1 - ' + str.tostring(math.round_to_mintick(middlechannelprice)),  color = color(na), textcolor = middlecolor, style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l5
+    label.delete(l5 [1])
+if showcclabels and showzz2 and zzchannels
+    l6  = label.new(bar_index, middlechannelprice2, 'Middle Channel 2 - ' + str.tostring(math.round_to_mintick(middlechannelprice2)), color = color(na), textcolor = middlecolor, style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l6
+    label.delete(l6 [1])
+if showcclabels and showzz3 and zzchannels
+    l7  = label.new(bar_index, middlechannelprice3, 'Middle Channel 3 - ' + str.tostring(math.round_to_mintick(middlechannelprice3)), color = color(na), textcolor = middlecolor, style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l7
+    label.delete(l7 [1])
+if showcclabels and showzz4 and zzchannels
+    l8  = label.new(bar_index, middlechannelprice4, 'Middle Channel 4 - ' + str.tostring(math.round_to_mintick(middlechannelprice4)), color = color(na), textcolor = middlecolor, style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l8
+    label.delete(l8 [1])
+if showcclabels and showzz  and zzchannels
+    l9  = label.new(bar_index, lowerchannelprice,   'Lower Channel 1 - '  + str.tostring(math.round_to_mintick(lowerchannelprice)),   color = color(na), textcolor = lowcolor,    style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l9
+    label.delete(l9 [1])
+if showcclabels and showzz2 and zzchannels
+    l10 = label.new(bar_index, lowerchannelprice2,  'Lower Channel 2 - '  + str.tostring(math.round_to_mintick(lowerchannelprice2)),  color = color(na), textcolor = lowcolor,    style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l10
+    label.delete(l10[1])
+if showcclabels and showzz3 and zzchannels
+    l11 = label.new(bar_index, lowerchannelprice3,  'Lower Channel 3 - '  + str.tostring(math.round_to_mintick(lowerchannelprice3)),  color = color(na), textcolor = lowcolor,    style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l11
+    label.delete(l11[1])
+if showcclabels and showzz4 and zzchannels
+    l12 = label.new(bar_index, lowerchannelprice4,  'Lower Channel 4 - '  + str.tostring(math.round_to_mintick(lowerchannelprice4)),  color = color(na), textcolor = lowcolor,    style = label.style_label_left, yloc = yloc.price, size = size.small)
+    l12
+    label.delete(l12[1])
+
+// Generate alerts when price crosses the upper, middle, or lower cloud channels across all ZigZag settings
+if chanalerts and zzchannels and showzz  and ta.cross    (close, upperchannelprice  )
+    alert('Upper Channel 1 Crossed! At '  +  str.tostring(upperchannelprice         ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz  and ta.cross    (close, middlechannelprice )
+    alert('Middle Channel 1 Crossed! At ' +  str.tostring(middlechannelprice        ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz  and ta.cross    (close, lowerchannelprice  )
+    alert('Lower Channel 1 Crossed! At '  +  str.tostring(lowerchannelprice         ), alert.freq_once_per_bar)
+
+if chanalerts and zzchannels and showzz2 and ta.cross    (close, upperchannelprice2 )
+    alert('Upper Channel 2 Crossed! At '  +  str.tostring(upperchannelprice2        ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz2 and ta.cross    (close, middlechannelprice2)
+    alert('Middle Channel 2 Crossed! At ' +  str.tostring(middlechannelprice2       ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz2 and ta.cross    (close, lowerchannelprice2 )
+    alert('Lower Channel 2 Crossed! At '  +  str.tostring(lowerchannelprice2        ), alert.freq_once_per_bar)
+
+if chanalerts and zzchannels and showzz3 and ta.cross    (close, upperchannelprice3 )
+    alert('Upper Channel 3 Crossed! At '  +  str.tostring(upperchannelprice3        ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz3 and ta.cross    (close, middlechannelprice3)
+    alert('Middle Channel 3 Crossed! At ' +  str.tostring(middlechannelprice3       ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz3 and ta.cross    (close, lowerchannelprice3 )
+    alert('Lower Channel 3 Crossed! At '  +  str.tostring(lowerchannelprice3        ), alert.freq_once_per_bar)
+
+if chanalerts and zzchannels and showzz4 and ta.cross    (close, upperchannelprice4 )
+    alert('Upper Channel 4 Crossed! At '  +  str.tostring(upperchannelprice4        ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz4 and ta.cross    (close, middlechannelprice4)
+    alert('Middle Channel 4 Crossed! At ' +  str.tostring(middlechannelprice4       ), alert.freq_once_per_bar)
+if chanalerts and zzchannels and showzz4 and ta.cross    (close, lowerchannelprice4 )
+    alert('Lower Channel 4 Crossed! At '  +  str.tostring(lowerchannelprice4        ), alert.freq_once_per_bar)
+
+// Display labels for Order Block price changes across all ZigZag settings
+if showplabels
+    l = ta.change(bearobprice)  ? label.new(bar_index, bearobprice  + 0.01, str.tostring(math.round_to_mintick(bearobpriceold)),  color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_down, yloc = yloc.abovebar, size = size.small) : ta.change(bullobprice)  ? label.new(bar_index, bullobprice  - 0.01, str.tostring(math.round_to_mintick(bullobpriceold)),  color = color.new(color.white, 90),  textcolor = chart.fg_color, style = label.style_label_up, yloc = yloc.belowbar, size = size.small) : na
+    l
+
+if showplabels and showzz2
+    l = ta.change(bearobprice2) ? label.new(bar_index, bearobprice2 + 0.01, str.tostring(math.round_to_mintick(bearobpriceold2)), color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_down, yloc = yloc.abovebar, size = size.small) : ta.change(bullobprice2) ? label.new(bar_index, bullobprice2 - 0.01, str.tostring(math.round_to_mintick(bullobpriceold2)), color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_up, yloc = yloc.belowbar, size = size.small) : na
+    l
+
+if showplabels and showzz3
+    l = ta.change(bearobprice3) ? label.new(bar_index, bearobprice3 + 0.01, str.tostring(math.round_to_mintick(bearobpriceold3)), color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_down, yloc = yloc.abovebar, size = size.small) : ta.change(bullobprice3) ? label.new(bar_index, bullobprice3 - 0.01, str.tostring(math.round_to_mintick(bullobpriceold3)), color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_up, yloc = yloc.belowbar, size = size.small) : na
+    l
+
+if showplabels and showzz4
+    l = ta.change(bearobprice4) ? label.new(bar_index, bearobprice4 + 0.01, str.tostring(math.round_to_mintick(bearobpriceold4)), color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_down, yloc = yloc.abovebar, size = size.small) : ta.change(bullobprice4) ? label.new(bar_index, bullobprice4 - 0.01, str.tostring(math.round_to_mintick(bullobpriceold4)), color = color.new(color.white, 90), textcolor = chart.fg_color, style = label.style_label_up, yloc = yloc.belowbar, size = size.small) : na
+    l
+
+// Retracement line variables declaration
+var int     numberofline       = maxlines
+var float   upperphzone        = na
+var float   upperplzone        = na
+var float   lowerphzone        = na
+var float   lowerplzone        = na
+var line[]  upperphzonearr     = array.new_line(0, na)
+var line[]  upperplzonearr     = array.new_line(0, na)
+var line[]  lowerphzonearr     = array.new_line(0, na)
+var line[]  lowerplzonearr     = array.new_line(0, na)
+var line    upperphzoneline    = na
+var line    upperplzoneline    = na
+var line    lowerphzoneline    = na
+var line    lowerplzoneline    = na
+var bool[]  upperzonetestedarr = array.new_bool(0, false)
+var bool[]  lowerzonetestedarr = array.new_bool(0, false)
+var bool    upperzonetested    = false
+var bool    lowerzonetested    = false
+var bool    nobool             = true
+var color   upperzonecolor     = topcolor
+var color   lowerzonecolor     = bottomcolor
+var label[] labelpharr         = array.new_label(0, na)
+var label[] labelplarr         = array.new_label(0, na)
+var label   labelph            = na
+var label   labelpl            = na
+
+// Function to map string descriptors to line styles
+f_linestyle(_style)  =>
+    _style  ==  'Solid' ? line.style_solid : _style  ==  'Dotted' ? line.style_dotted : line.style_dashed
+
+// Resistance line calculations and styling
+if highindex[0] and nz(bearishob[0]) == 1 and rline
+    upperphzone     := high
+    upperplzone     := close  <  open   ? close : open
+    upperplzoneline := layout == 'Zone' ? line.new (bar_index, upperplzone, bar_index, upperplzone, width = linessize) : na
+    upperphzoneline := nobool           ? line.new (bar_index, upperphzone, bar_index, upperphzone, width = linessize) : line.new(bar_index, (upperphzone + upperplzone) / 2, bar_index, (upperphzone + upperplzone) / 2, width = linessize)
+    labelph         := showprice        ? label.new(bar_index, nobool ? upperphzone : (upperphzone + upperplzone) / 2, text = str.tostring(bar_index - bar_index), textcolor = upperzonecolor, style = label.style_none) : na
+    if               array.size (upperphzonearr    ) > numberofline
+        line.delete (array.shift(upperphzonearr    ))
+        line.delete (array.shift(upperplzonearr    ))
+        array.shift             (upperzonetestedarr)
+        label.delete(array.shift(labelpharr        ))
+    array.push(upperphzonearr,     upperphzoneline)
+    array.push(upperplzonearr,     upperplzoneline)
+    array.push(upperzonetestedarr, false          )
+    array.push(labelpharr,         labelph        )
+if array.size(upperplzonearr) > 0
+    for i = 0 to array.size(upperplzonearr) - 1 by 1
+        line  tempupperline  = array.get(upperphzonearr,     i)
+        line  templowerline  = array.get(upperplzonearr,     i)
+        label linepricelabel = array.get(labelpharr,         i)
+        bool  tested         = array.get(upperzonetestedarr, i)
+        line.set_style     (tempupperline,  f_linestyle(linestyle))
+        line.set_style     (templowerline,  f_linestyle(linestyle))
+        line.set_color     (tempupperline,  color.from_gradient(i, 1, numberofline, color.new(upperzonecolor, 00), color.new(upperzonecolor, 00)))
+        line.set_color     (templowerline,  color.from_gradient(i, 1, numberofline, color.new(upperzonecolor, 00), color.new(upperzonecolor, 00)))
+        label.set_textcolor(linepricelabel, color.from_gradient(i, 1, numberofline, color.new(upperzonecolor, 00),           upperzonecolor    ))
+        label.set_text     (linepricelabel,                                                                                   str.tostring(math.round_to_mintick(line.get_y1(tempupperline))))
+        label.set_text     (linepricelabel, '                                                         Top Retracement 1 - ' + str.tostring(math.round_to_mintick(line.get_y1(tempupperline))))
+        label.set_x        (linepricelabel, bar_index )
+        label.set_size     (linepricelabel, size.small)
+        crossed = high > line.get_y1(tempupperline)
+        if crossed and not tested
+            array.set   (upperzonetestedarr, i, true)
+            label.delete(linepricelabel             )
+        if crossalerts and crossed and not tested
+            array.set   (upperzonetestedarr, i, true)
+            label.delete(linepricelabel             )
+            alert('Top Line 1 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested
+            line.set_x2(tempupperline,     bar_index    )
+            array.set  (upperphzonearr, i, tempupperline)
+            line.set_x2(templowerline,     bar_index    )
+            array.set  (upperplzonearr, i, templowerline)
+
+// Support line calculations and styling
+if lowindex[0] and nz(bullishob[0]) == -1 and rline
+    lowerplzone     := low
+    lowerphzone     := close  <  open   ? open : close
+    lowerphzoneline := layout == 'Zone' ? line.new (bar_index, lowerphzone, bar_index, lowerphzone, width = linessize) : na
+    lowerplzoneline := nobool           ? line.new (bar_index, lowerplzone, bar_index, lowerplzone, width = linessize) : line.new(bar_index, (lowerphzone + lowerplzone) / 2, bar_index, (lowerphzone + lowerplzone) / 2, width = linessize)
+    labelpl         := showprice        ? label.new(bar_index, nobool ? lowerplzone : (lowerphzone + lowerplzone) / 2, text = str.tostring(bar_index - bar_index), textcolor = lowerzonecolor, style = label.style_none) : na
+    if array.size   (lowerphzonearr) > numberofline
+        line.delete (array.shift(lowerphzonearr    ))
+        line.delete (array.shift(lowerplzonearr    ))
+        array.shift             (lowerzonetestedarr)
+        label.delete(array.shift(labelplarr        ))
+    array.push(lowerphzonearr,     lowerphzoneline)
+    array.push(lowerplzonearr,     lowerplzoneline)
+    array.push(lowerzonetestedarr, false          )
+    array.push(labelplarr,         labelpl        )
+if array.size(lowerplzonearr) > 0
+    for i = 0 to array.size(lowerplzonearr) - 1 by 1
+        line  tempupperline  = array.get(lowerphzonearr,     i)
+        line  templowerline  = array.get(lowerplzonearr,     i)
+        label linepricelabel = array.get(labelplarr,         i)
+        bool  tested         = array.get(lowerzonetestedarr, i)
+        line.set_style     (tempupperline,  f_linestyle(linestyle))
+        line.set_style     (templowerline,  f_linestyle(linestyle))
+        line.set_color     (tempupperline,  color.from_gradient(i, 1, numberofline, color.new(lowerzonecolor, 00), color.new(lowerzonecolor, 00)))
+        line.set_color     (templowerline,  color.from_gradient(i, 1, numberofline, color.new(lowerzonecolor, 00), color.new(lowerzonecolor, 00)))
+        label.set_textcolor(linepricelabel, color.from_gradient(i, 1, numberofline, color.new(lowerzonecolor, 00),           lowerzonecolor    ))
+        label.set_text     (linepricelabel,                                                                                            str.tostring(math.round_to_mintick(line.get_y1(templowerline))))
+        label.set_text     (linepricelabel, '                                                               Bottom Retracement 1 - ' + str.tostring(math.round_to_mintick(line.get_y1(templowerline))))
+        label.set_x        (linepricelabel, bar_index )
+        label.set_size     (linepricelabel, size.small)
+        crossed = low < line.get_y1(templowerline)
+        if crossed and not tested
+            array.set   (lowerzonetestedarr, i, true)
+            label.delete(linepricelabel             )
+        if crossalerts and crossed and not tested
+            array.set   (lowerzonetestedarr, i, true)
+            label.delete(linepricelabel             )
+            alert('Bottom Line 1 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested
+            line.set_x2(tempupperline,     bar_index    )
+            array.set  (lowerphzonearr, i, tempupperline)
+            line.set_x2(templowerline,     bar_index    )
+            array.set  (lowerplzonearr, i, templowerline)
+
+// Retracement line variables declaration 2
+var int     numberofline2       = maxlines
+var float   upperphzone2        = na
+var float   upperplzone2        = na
+var float   lowerphzone2        = na
+var float   lowerplzone2        = na
+var line[]  upperphzonearr2     = array.new_line(0, na)
+var line[]  upperplzonearr2     = array.new_line(0, na)
+var line[]  lowerphzonearr2     = array.new_line(0, na)
+var line[]  lowerplzonearr2     = array.new_line(0, na)
+var line    upperphzoneline2    = na
+var line    upperplzoneline2    = na
+var line    lowerphzoneline2    = na
+var line    lowerplzoneline2    = na
+var bool[]  upperzonetestedarr2 = array.new_bool(0, false)
+var bool[]  lowerzonetestedarr2 = array.new_bool(0, false)
+var bool    upperzonetested2    = false
+var bool    lowerzonetested2    = false
+var bool    nobool2             = true
+var color   upperzonecolor2     = topcolor
+var color   lowerzonecolor2     = bottomcolor
+var label[] labelpharr2         = array.new_label(0, na)
+var label[] labelplarr2         = array.new_label(0, na)
+var label   labelph2            = na
+var label   labelpl2            = na
+
+// Resistance line calculations and styling 2
+if showzz2 and highindex2[0] and nz(bearishob2[0]) == 1 and rline
+    upperphzone2     := high
+    upperplzone2     := close  <  open   ? close : open
+    upperplzoneline2 := layout == 'Zone' ? line.new (bar_index, upperplzone2, bar_index, upperplzone2, width = linessize) : na
+    upperphzoneline2 := nobool2          ? line.new (bar_index, upperphzone2, bar_index, upperphzone2, width = linessize) : line.new(bar_index, (upperphzone2 + upperplzone2) / 2, bar_index, (upperphzone2 + upperplzone2) / 2, width = linessize)
+    labelph2         := showprice        ? label.new(bar_index, nobool2 ? upperphzone2 : (upperphzone2 + upperplzone2) / 2, text = str.tostring(bar_index - bar_index), textcolor = upperzonecolor2, style = label.style_none) : na
+    if array.size(upperphzonearr2) > numberofline2
+        line.delete (array.shift(upperphzonearr2    ))
+        line.delete (array.shift(upperplzonearr2    ))
+        array.shift             (upperzonetestedarr2)
+        label.delete(array.shift(labelpharr2        ))
+    array.push(upperphzonearr2,     upperphzoneline2)
+    array.push(upperplzonearr2,     upperplzoneline2)
+    array.push(upperzonetestedarr2, false           )
+    array.push(labelpharr2,         labelph2        )
+if array.size(upperplzonearr2) > 0
+    for i = 0 to array.size(upperplzonearr2) - 1 by 1
+        line  tempupperline2  = array.get(upperphzonearr2,     i)
+        line  templowerline2  = array.get(upperplzonearr2,     i)
+        label linepricelabel2 = array.get(labelpharr2,         i)
+        bool  tested2         = array.get(upperzonetestedarr2, i)
+        line.set_style     (tempupperline2,  f_linestyle(linestyle))
+        line.set_style     (templowerline2,  f_linestyle(linestyle))
+        line.set_color     (tempupperline2,  color.from_gradient(i, 1, numberofline2, color.new(upperzonecolor2, 00), color.new(upperzonecolor2, 00)))
+        line.set_color     (templowerline2,  color.from_gradient(i, 1, numberofline2, color.new(upperzonecolor2, 00), color.new(upperzonecolor2, 00)))
+        label.set_textcolor(linepricelabel2, color.from_gradient(i, 1, numberofline2, color.new(upperzonecolor2, 00),           upperzonecolor2    ))
+        label.set_text     (linepricelabel2,                                                                                   str.tostring(math.round_to_mintick(line.get_y1(tempupperline2))))
+        label.set_text     (linepricelabel2, '                                                         Top Retracement 2 - ' + str.tostring(math.round_to_mintick(line.get_y1(tempupperline2))))
+        label.set_x        (linepricelabel2, bar_index )
+        label.set_size     (linepricelabel2, size.small)
+        crossed = high > line.get_y1(tempupperline2)
+        if crossed and not tested2
+            array.set   (upperzonetestedarr2, i, true)
+            label.delete(linepricelabel2             )
+        if crossalerts and showzz2 and crossed and not tested2
+            array.set(upperzonetestedarr2,    i, true)
+            label.delete(linepricelabel2             )
+            alert('Top Line 2 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested2
+            line.set_x2(tempupperline2,    bar_index     )
+            array.set(upperphzonearr2,  i, tempupperline2)
+            line.set_x2(templowerline2,    bar_index     )
+            array.set(upperplzonearr2,  i, templowerline2)
+
+// Support line calculations and styling 2
+if showzz2 and lowindex2[0] and nz(bullishob2[0]) == -1 and rline
+    lowerplzone2     := low
+    lowerphzone2     := close  <  open   ? open : close
+    lowerphzoneline2 := layout == 'Zone' ? line.new (bar_index, lowerphzone2, bar_index, lowerphzone2, width = linessize) : na
+    lowerplzoneline2 := nobool2          ? line.new (bar_index, lowerplzone2, bar_index, lowerplzone2, width = linessize) : line.new(bar_index, (lowerphzone2 + lowerplzone2) / 2, bar_index, (lowerphzone2 + lowerplzone2) / 2, width = linessize)
+    labelpl2         := showprice        ? label.new(bar_index, nobool2 ? lowerplzone2 : (lowerphzone2 + lowerplzone2) / 2, text = str.tostring(bar_index - bar_index), textcolor = lowerzonecolor2, style = label.style_none) : na
+    if array.size(lowerphzonearr2) > numberofline2
+        line.delete (array.shift(lowerphzonearr2    ))
+        line.delete (array.shift(lowerplzonearr2    ))
+        array.shift             (lowerzonetestedarr2)
+        label.delete(array.shift(labelplarr2        ))
+    array.push(lowerphzonearr2,     lowerphzoneline2)
+    array.push(lowerplzonearr2,     lowerplzoneline2)
+    array.push(lowerzonetestedarr2, false           )
+    array.push(labelplarr2,         labelpl2        )
+if array.size(lowerplzonearr2) > 0
+    for i = 0 to array.size(lowerplzonearr2) - 1 by 1
+        line  tempupperline2  = array.get(lowerphzonearr2,     i)
+        line  templowerline2  = array.get(lowerplzonearr2,     i)
+        label linepricelabel2 = array.get(labelplarr2,         i)
+        bool  tested2         = array.get(lowerzonetestedarr2, i)
+        line.set_style     (tempupperline2,  f_linestyle(linestyle))
+        line.set_style     (templowerline2,  f_linestyle(linestyle))
+        line.set_color     (tempupperline2,  color.from_gradient(i, 1, numberofline2, color.new(lowerzonecolor2, 00), color.new(lowerzonecolor2, 00)))
+        line.set_color     (templowerline2,  color.from_gradient(i, 1, numberofline2, color.new(lowerzonecolor2, 00), color.new(lowerzonecolor2, 00)))
+        label.set_textcolor(linepricelabel2, color.from_gradient(i, 1, numberofline2, color.new(lowerzonecolor2, 00),           lowerzonecolor2    ))
+        label.set_text     (linepricelabel2,                                                                                            str.tostring(math.round_to_mintick(line.get_y1(templowerline2))))
+        label.set_text     (linepricelabel2, '                                                               Bottom Retracement 2 - ' + str.tostring(math.round_to_mintick(line.get_y1(templowerline2))))
+        label.set_x        (linepricelabel2, bar_index )
+        label.set_size     (linepricelabel2, size.small)
+        crossed = low < line.get_y1(templowerline2)
+        if crossed and not tested2
+            array.set   (lowerzonetestedarr2, i, true)
+            label.delete(linepricelabel2)
+        if crossalerts and showzz2 and crossed and not tested2
+            array.set   (lowerzonetestedarr2, i, true)
+            label.delete(linepricelabel2)
+            alert('Bottom Line 2 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested2
+            line.set_x2(tempupperline2,     bar_index     )
+            array.set  (lowerphzonearr2, i, tempupperline2)
+            line.set_x2(templowerline2,     bar_index     )
+            array.set  (lowerplzonearr2, i, templowerline2)
+
+// Retracement line variables declaration 3
+var int     numberofline3       = maxlines
+var float   upperphzone3        = na
+var float   upperplzone3        = na
+var float   lowerphzone3        = na
+var float   lowerplzone3        = na
+var line[]  upperphzonearr3     = array.new_line(0, na)
+var line[]  upperplzonearr3     = array.new_line(0, na)
+var line[]  lowerphzonearr3     = array.new_line(0, na)
+var line[]  lowerplzonearr3     = array.new_line(0, na)
+var line    upperphzoneline3    = na
+var line    upperplzoneline3    = na
+var line    lowerphzoneline3    = na
+var line    lowerplzoneline3    = na
+var bool[]  upperzonetestedarr3 = array.new_bool(0, false)
+var bool[]  lowerzonetestedarr3 = array.new_bool(0, false)
+var bool    upperzonetested3    = false
+var bool    lowerzonetested3    = false
+var bool    nobool3             = true
+var color   upperzonecolor3     = topcolor
+var color   lowerzonecolor3     = bottomcolor
+var label[] labelpharr3         = array.new_label(0, na)
+var label[] labelplarr3         = array.new_label(0, na)
+var label   labelph3            = na
+var label   labelpl3            = na
+
+// Resistance line calculations and styling 3
+if showzz3 and highindex3[0] and nz(bearishob3[0]) == 1 and rline
+    upperphzone3     := high
+    upperplzone3     := close  <  open   ? close : open
+    upperplzoneline3 := layout == 'Zone' ? line.new (bar_index, upperplzone3, bar_index, upperplzone3, width = linessize) : na
+    upperphzoneline3 := nobool3          ? line.new (bar_index, upperphzone3, bar_index, upperphzone3, width = linessize) : line.new(bar_index, (upperphzone3 + upperplzone3) / 2, bar_index, (upperphzone3 + upperplzone3) / 2, width = linessize)
+    labelph3         := showprice        ? label.new(bar_index, nobool3 ? upperphzone3 : (upperphzone3 + upperplzone3) / 2, text = str.tostring(bar_index - bar_index), textcolor = upperzonecolor3, style = label.style_none) : na
+    if array.size(upperphzonearr3) > numberofline3
+        line.delete(array.shift (upperphzonearr3    ))
+        line.delete(array.shift (upperplzonearr3    ))
+        array.shift             (upperzonetestedarr3)
+        label.delete(array.shift(labelpharr3        ))
+    array.push(upperphzonearr3,     upperphzoneline3)
+    array.push(upperplzonearr3,     upperplzoneline3)
+    array.push(upperzonetestedarr3, false           )
+    array.push(labelpharr3,         labelph3        )
+if array.size(upperplzonearr3) > 0
+    for i = 0 to array.size(upperplzonearr3) - 1 by 1
+        line  tempupperline3  = array.get(upperphzonearr3,     i)
+        line  templowerline3  = array.get(upperplzonearr3,     i)
+        label linepricelabel3 = array.get(labelpharr3,         i)
+        bool  tested3         = array.get(upperzonetestedarr3, i)
+        line.set_style     (tempupperline3,  f_linestyle(linestyle))
+        line.set_style     (templowerline3,  f_linestyle(linestyle))
+        line.set_color     (tempupperline3,  color.from_gradient(i, 1, numberofline3, color.new(upperzonecolor3, 00), color.new(upperzonecolor3, 00)))
+        line.set_color     (templowerline3,  color.from_gradient(i, 1, numberofline3, color.new(upperzonecolor3, 00), color.new(upperzonecolor3, 00)))
+        label.set_textcolor(linepricelabel3, color.from_gradient(i, 1, numberofline3, color.new(upperzonecolor3, 00),           upperzonecolor3    ))
+        label.set_text     (linepricelabel3,                                                                                   str.tostring(math.round_to_mintick(line.get_y1(tempupperline3))))
+        label.set_text     (linepricelabel3, '                                                         Top Retracement 3 - ' + str.tostring(math.round_to_mintick(line.get_y1(tempupperline3))))
+        label.set_x        (linepricelabel3, bar_index )
+        label.set_size     (linepricelabel3, size.small)
+        crossed = high > line.get_y1(tempupperline3)
+        if crossed and not tested3
+            array.set   (upperzonetestedarr3, i, true)
+            label.delete(linepricelabel3)
+        if crossalerts and showzz3 and crossed and not tested3
+            array.set   (upperzonetestedarr3, i, true)
+            label.delete(linepricelabel3)
+            alert('Top Line 3 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested3
+            line.set_x1(tempupperline3,     bar_index     )
+            array.set  (upperphzonearr3, i, tempupperline3)
+            line.set_x1(templowerline3,     bar_index     )
+            array.set  (upperplzonearr3, i, templowerline3)
+
+// Support line calculations and styling 3
+if showzz3 and lowindex3[0] and nz(bullishob3[0]) == -1 and rline
+    lowerplzone3     := low
+    lowerphzone3     := close  <  open   ? open : close
+    lowerphzoneline3 := layout == 'Zone' ? line.new (bar_index, lowerphzone3, bar_index, lowerphzone3, width = linessize) : na
+    lowerplzoneline3 := nobool3          ? line.new (bar_index, lowerplzone3, bar_index, lowerplzone3, width = linessize) : line.new(bar_index, (lowerphzone3 + lowerplzone3) / 2, bar_index, (lowerphzone3 + lowerplzone3) / 2, width = linessize)
+    labelpl3         := showprice        ? label.new(bar_index, nobool3 ? lowerplzone3 : (lowerphzone3 + lowerplzone3) / 2, text = str.tostring(bar_index - bar_index), textcolor = lowerzonecolor3, style = label.style_none) : na
+    if array.size(lowerphzonearr3) > numberofline3
+        line.delete (array.shift(lowerphzonearr3    ))
+        line.delete (array.shift(lowerplzonearr3    ))
+        array.shift             (lowerzonetestedarr3)
+        label.delete(array.shift(labelplarr3        ))
+    array.push(lowerphzonearr3,     lowerphzoneline3)
+    array.push(lowerplzonearr3,     lowerplzoneline3)
+    array.push(lowerzonetestedarr3, false           )
+    array.push(labelplarr3,         labelpl3        )
+if array.size(lowerplzonearr3) > 0
+    for i = 0 to array.size(lowerplzonearr3) - 1 by 1
+        line  tempupperline3  = array.get(lowerphzonearr3,     i)
+        line  templowerline3  = array.get(lowerplzonearr3,     i)
+        label linepricelabel3 = array.get(labelplarr3,         i)
+        bool  tested3         = array.get(lowerzonetestedarr3, i)
+        line.set_style     (tempupperline3,  f_linestyle(linestyle))
+        line.set_style     (templowerline3,  f_linestyle(linestyle))
+        line.set_color     (tempupperline3,  color.from_gradient(i, 1, numberofline3, color.new(lowerzonecolor3, 00), color.new(lowerzonecolor3, 00)))
+        line.set_color     (templowerline3,  color.from_gradient(i, 1, numberofline3, color.new(lowerzonecolor3, 00), color.new(lowerzonecolor3, 00)))
+        label.set_textcolor(linepricelabel3, color.from_gradient(i, 1, numberofline3, color.new(lowerzonecolor3, 00),           lowerzonecolor3    ))
+        label.set_text     (linepricelabel3,                                                                                            str.tostring(math.round_to_mintick(line.get_y1(templowerline3))))
+        label.set_text     (linepricelabel3, '                                                               Bottom Retracement 3 - ' + str.tostring(math.round_to_mintick(line.get_y1(templowerline3))))
+        label.set_x        (linepricelabel3, bar_index )
+        label.set_size     (linepricelabel3, size.small)
+        crossed = low < line.get_y1(templowerline3)
+        if crossed and not tested3
+            array.set   (lowerzonetestedarr3, i, true)
+            label.delete(linepricelabel3)
+        if crossalerts and showzz3 and crossed and not tested3
+            array.set   (lowerzonetestedarr3, i, true)
+            label.delete(linepricelabel3)
+            alert('Bottom Line 3 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested3
+            line.set_x1(tempupperline3,     bar_index     )
+            array.set  (lowerphzonearr3, i, tempupperline3)
+            line.set_x1(templowerline3,     bar_index     )
+            array.set  (lowerplzonearr3, i, templowerline3)
+
+// Retracement line variables declaration 4
+var int     numberofline4       = maxlines
+var float   upperphzone4        = na
+var float   upperplzone4        = na
+var float   lowerphzone4        = na
+var float   lowerplzone4        = na
+var line[]  upperphzonearr4     = array.new_line(0, na)
+var line[]  upperplzonearr4     = array.new_line(0, na)
+var line[]  lowerphzonearr4     = array.new_line(0, na)
+var line[]  lowerplzonearr4     = array.new_line(0, na)
+var line    upperphzoneline4    = na
+var line    upperplzoneline4    = na
+var line    lowerphzoneline4    = na
+var line    lowerplzoneline4    = na
+var bool[]  upperzonetestedarr4 = array.new_bool(0, false)
+var bool[]  lowerzonetestedarr4 = array.new_bool(0, false)
+var bool    upperzonetested4    = false
+var bool    lowerzonetested4    = false
+var bool    nobool4             = true
+var color   upperzonecolor4     = topcolor
+var color   lowerzonecolor4     = bottomcolor
+var label[] labelpharr4         = array.new_label(0, na)
+var label[] labelplarr4         = array.new_label(0, na)
+var label   labelph4            = na
+var label   labelpl4            = na
+
+// Resistance line calculations and styling 4
+if showzz4 and highindex4[0] and nz(bearishob4[0]) == 1 and rline
+    upperphzone4     := high
+    upperplzone4     := close  < open    ? close : open
+    upperplzoneline4 := layout == 'Zone' ? line.new (bar_index, upperplzone4, bar_index, upperplzone4, width = linessize) : na
+    upperphzoneline4 := nobool4          ? line.new (bar_index, upperphzone4, bar_index, upperphzone4, width = linessize) : line.new(bar_index, (upperphzone4 + upperplzone4) / 2, bar_index, (upperphzone4 + upperplzone4) / 2, width = linessize)
+    labelph4         := showprice        ? label.new(bar_index, nobool4 ? upperphzone4 : (upperphzone4 + upperplzone4) / 2, text = str.tostring(bar_index - bar_index), textcolor = upperzonecolor4, style = label.style_none) : na
+    if array.size(upperphzonearr4) > numberofline4
+        line.delete (array.shift(upperphzonearr4    ))
+        line.delete (array.shift(upperplzonearr4    ))
+        array.shift             (upperzonetestedarr4)
+        label.delete(array.shift(labelpharr4        ))
+    array.push(upperphzonearr4,     upperphzoneline4)
+    array.push(upperplzonearr4,     upperplzoneline4)
+    array.push(upperzonetestedarr4, false           )
+    array.push(labelpharr4,         labelph4        )
+if array.size(upperplzonearr4) > 0
+    for i = 0 to array.size(upperplzonearr4) - 1 by 1
+        line  tempupperline4  = array.get(upperphzonearr4,     i)
+        line  templowerline4  = array.get(upperplzonearr4,     i)
+        label linepricelabel4 = array.get(labelpharr4,         i)
+        bool  tested4         = array.get(upperzonetestedarr4, i)
+        line.set_style     (tempupperline4,  f_linestyle(linestyle))
+        line.set_style     (templowerline4,  f_linestyle(linestyle))
+        line.set_color     (tempupperline4,  color.from_gradient(i, 1, numberofline4, color.new(upperzonecolor4, 00), color.new(upperzonecolor4, 00)))
+        line.set_color     (templowerline4,  color.from_gradient(i, 1, numberofline4, color.new(upperzonecolor4, 00), color.new(upperzonecolor4, 00)))
+        label.set_textcolor(linepricelabel4, color.from_gradient(i, 1, numberofline4, color.new(upperzonecolor4, 00),           upperzonecolor4    ))
+        label.set_text     (linepricelabel4,                                                                                   str.tostring(math.round_to_mintick(line.get_y1(tempupperline4))))
+        label.set_text     (linepricelabel4, '                                                         Top Retracement 4 - ' + str.tostring(math.round_to_mintick(line.get_y1(tempupperline4))))
+        label.set_x        (linepricelabel4, bar_index )
+        label.set_size     (linepricelabel4, size.small)
+        crossed = high > line.get_y1(tempupperline4)
+        if crossed and not tested4
+            array.set   (upperzonetestedarr4, i, true)
+            label.delete(linepricelabel4)
+        if crossalerts and showzz4 and crossed and not tested4
+            array.set   (upperzonetestedarr4, i, true)
+            label.delete(linepricelabel4)
+            alert('Top Line 4 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested4
+            line.set_x1(tempupperline4,     bar_index     )
+            array.set  (upperphzonearr4, i, tempupperline4)
+            line.set_x1(templowerline4,     bar_index     )
+            array.set  (upperplzonearr4, i, templowerline4)
+
+// Support line calculations and styling 4
+if showzz4 and lowindex4[0] and nz(bullishob4[0])  ==  -1 and rline
+    lowerplzone4     := low
+    lowerphzone4     := close  < open    ? open : close
+    lowerphzoneline4 := layout == 'Zone' ? line.new (bar_index, lowerphzone4, bar_index, lowerphzone4, width = linessize) : na
+    lowerplzoneline4 := nobool4          ? line.new (bar_index, lowerplzone4, bar_index, lowerplzone4, width = linessize) : line.new(bar_index, (lowerphzone4 + lowerplzone4) / 2, bar_index, (lowerphzone4 + lowerplzone4) / 2, width = linessize)
+    labelpl4         := showprice        ? label.new(bar_index, nobool4 ? lowerplzone4 : (lowerphzone4 + lowerplzone4) / 2, text = str.tostring(bar_index - bar_index), textcolor = lowerzonecolor4, style = label.style_none) : na
+    if array.size(lowerphzonearr4) > numberofline4
+        line.delete (array.shift(lowerphzonearr4    ))
+        line.delete (array.shift(lowerplzonearr4    ))
+        array.shift             (lowerzonetestedarr4)
+        label.delete(array.shift(labelplarr4        ))
+    array.push(lowerphzonearr4,     lowerphzoneline4)
+    array.push(lowerplzonearr4,     lowerplzoneline4)
+    array.push(lowerzonetestedarr4, false           )
+    array.push(labelplarr4,         labelpl4        )
+if array.size(lowerplzonearr4) > 0
+    for i = 0 to array.size(lowerplzonearr4) - 1 by 1
+        line  tempupperline4  = array.get(lowerphzonearr4,     i)
+        line  templowerline4  = array.get(lowerplzonearr4,     i)
+        label linepricelabel4 = array.get(labelplarr4,         i)
+        bool  tested4         = array.get(lowerzonetestedarr4, i)
+        line.set_style     (tempupperline4,  f_linestyle(linestyle))
+        line.set_style     (templowerline4,  f_linestyle(linestyle))
+        line.set_color     (tempupperline4,  color.from_gradient(i, 1, numberofline4, color.new(lowerzonecolor4, 00), color.new(lowerzonecolor4, 00)))
+        line.set_color     (templowerline4,  color.from_gradient(i, 1, numberofline4, color.new(lowerzonecolor4, 00), color.new(lowerzonecolor4, 00)))
+        label.set_textcolor(linepricelabel4, color.from_gradient(i, 1, numberofline4, color.new(lowerzonecolor4, 00),           lowerzonecolor4    ))
+        label.set_text     (linepricelabel4,                                                                                            str.tostring(math.round_to_mintick(line.get_y1(templowerline4))))
+        label.set_text     (linepricelabel4, '                                                               Bottom Retracement 4 - ' + str.tostring(math.round_to_mintick(line.get_y1(templowerline4))))
+        label.set_x        (linepricelabel4, bar_index )
+        label.set_size     (linepricelabel4, size.small)
+        crossed = low < line.get_y1(templowerline4)
+        if crossed and not tested4
+            array.set   (lowerzonetestedarr4, i, true)
+            label.delete(linepricelabel4)
+        if crossalerts and showzz4 and crossed and not tested4
+            array.set   (lowerzonetestedarr4, i, true)
+            label.delete(linepricelabel4)
+            alert('Bottom Line 4 Has Been Crossed! At ' + str.tostring(close), alert.freq_once_per_bar)
+        else if not tested4
+            line.set_x1(tempupperline4,     bar_index     )
+            array.set  (lowerphzonearr4, i, tempupperline4)
+            line.set_x1(templowerline4,     bar_index     )
+            array.set  (lowerplzonearr4, i, templowerline4)
+
+// Set alert conditions for when any Order Block has been detected
+if obalerts and bearob              == 1
+    alert('Bearish OB 1 Detected! At ' + str.tostring(bearobpriceold), alert.freq_once_per_bar)
+if obalerts and bullob              == 1
+    alert('Bullish OB 1 Detected! At ' + str.tostring(bullobpriceold), alert.freq_once_per_bar)
+if obalerts and showzz2 and bearob2 == 1
+    alert('Bearish OB 2 Detected! At ' + str.tostring(bearobpriceold), alert.freq_once_per_bar)
+if obalerts and showzz2 and bullob2 == 1
+    alert('Bullish OB 2 Detected! At ' + str.tostring(bullobpriceold), alert.freq_once_per_bar)
+if obalerts and showzz3 and bearob3 == 1
+    alert('Bearish OB 3 Detected! At ' + str.tostring(bearobpriceold), alert.freq_once_per_bar)
+if obalerts and showzz3 and bullob3 == 1
+    alert('Bullish OB 3 Detected! At ' + str.tostring(bullobpriceold), alert.freq_once_per_bar)
+if obalerts and showzz4 and bearob4 == 1
+    alert('Bearish OB 4 Detected! At ' + str.tostring(bearobpriceold), alert.freq_once_per_bar)
+if obalerts and showzz4 and bullob4 == 1
+    alert('Bullish OB 4 Detected! At ' + str.tostring(bullobpriceold), alert.freq_once_per_bar)

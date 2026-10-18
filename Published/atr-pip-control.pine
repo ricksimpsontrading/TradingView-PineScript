@@ -1,0 +1,728 @@
+// This Pine Script™ code is subject to the terms of the ATR Pip Control License Agreement.
+// Unauthorized copying, modification, distribution, or use of this code, via any medium, is strictly prohibited.
+// License Agreement: https://ricksimpsontrading.com/license
+// © 2025–2026 RickSimpson. All Rights Reserved.
+//
+// ATR Pip Control
+// Version: 5.0.0
+// Author:  Rick Simpson
+// Contact: support@ricksimpsontrading.com
+
+//@version=6
+indicator("ATR Pip Control", overlay = true,
+          max_lines_count  = 500,
+          max_labels_count = 500)
+
+// ═══════════════════════════════════════════════════════════════
+// §1 — INPUTS
+// ═══════════════════════════════════════════════════════════════
+
+// ── Display ──────────────────────────────────────────────────
+string GRP_DISPLAY = "Display"
+
+bool showLabels = input.bool(true, "Signal Labels", group = GRP_DISPLAY,
+     tooltip = "Show signal markers on the chart: solid triangles for "
+             + "confirmed breakouts, circles for provisional Live signals, "
+             + "and diamonds for pending persistence. "
+             + "Disable for a cleaner overlay if you rely solely on alerts.")
+
+color bullColor = input.color(#26A69A, "Bullish Color", group = GRP_DISPLAY,
+     tooltip = "Color applied to all bullish elements: signal triangles, "
+             + "Local End support lines, bar coloring, lower volatility band, "
+             + "and info table accents.")
+
+color bearColor = input.color(#EF5350, "Bearish Color", group = GRP_DISPLAY,
+     tooltip = "Color applied to all bearish elements: signal triangles, "
+             + "Local End resistance lines, bar coloring, upper volatility band, "
+             + "and info table accents.")
+
+bool showBands = input.bool(false, "Volatility Bands", group = GRP_DISPLAY,
+     tooltip = "Overlay the adaptive upper/lower bands on the chart. "
+             + "Bands are always computed internally for signal logic; "
+             + "this toggle only controls their visibility.")
+
+bool showBarColors = input.bool(true, "Bar Coloring", group = GRP_DISPLAY,
+     tooltip = "Tint chart bars based on the current regime direction. "
+             + "Signal bars use the full color; bars between signals use "
+             + "a lighter shade. No color is applied before the first signal.")
+
+// ── Volatility Engine ────────────────────────────────────────
+string GRP_ENGINE = "Volatility Engine"
+
+int atrPeriod = input.int(21, "ATR Period", minval = 1, group = GRP_ENGINE,
+     tooltip = "Lookback length for ATR and median-spread calculations, "
+             + "expressed in source-TF bars. 21 equals roughly one trading month. "
+             + "When the Source Timeframe is higher than the chart, the period "
+             + "is automatically scaled so that the same number of source-TF "
+             + "bars worth of data is always used (e.g. 21 on a 60-min source "
+             + "viewed on a 5-min chart uses 252 chart bars).")
+
+string filterUnit = input.string("Adaptive", "Filter Unit",
+     options = ["Adaptive", "Tick", "Pip"], group = GRP_ENGINE,
+     tooltip = "How the minimum body-size filter is expressed. "
+             + "Adaptive (recommended): the filter value is a percentage of "
+             + "the current ATR, computed from source-TF data. This auto-adapts "
+             + "to any instrument and any volatility regime — no recalibration "
+             + "needed when switching symbols. 25 means the body must be at "
+             + "least 25% of ATR. "
+             + "Tick: fixed count of minimum tick sizes. Manual, requires "
+             + "adjustment per instrument. "
+             + "Pip: standard forex pips (0.0001, or 0.01 for JPY). On "
+             + "non-forex instruments, falls back to 10 ticks per unit.")
+
+float filterValue = input.float(25, "Filter Value", minval = 0.1, step = 0.5,
+     group = GRP_ENGINE,
+     tooltip = "Minimum candle body size required to validate a breakout. "
+             + "In Adaptive mode: percentage of ATR (25 = body >= 25% of ATR). "
+             + "In Tick mode: number of ticks (25 = 25 × minimum tick size). "
+             + "In Pip mode: number of pips (25 = 25 standard pips on forex).")
+
+float upperCoef = input.float(0.8, "Upper Coefficient",
+     minval = 0, maxval = 1, step = 0.05, group = GRP_ENGINE,
+     tooltip = "Scaling factor for the median high-to-midrange spread "
+             + "used in the upper band. 0.8 balances sensitivity; "
+             + "raise toward 1.0 for wider bands, lower for tighter.")
+
+float lowerCoef = input.float(0.8, "Lower Coefficient",
+     minval = 0, maxval = 1, step = 0.05, group = GRP_ENGINE,
+     tooltip = "Scaling factor for the lower band. "
+             + "Keeping both coefficients at 0.8 preserves symmetry; "
+             + "adjust independently if your market shows directional skew.")
+
+// ── Local End (S/R) ──────────────────────────────────────────
+string GRP_LOCALEND = "Local End (S/R)"
+
+bool showLocalEnds = input.bool(true, "Local End Lines", group = GRP_LOCALEND,
+     tooltip = "Draw dashed horizontal lines at the latest detected "
+             + "tops and bottoms. These act as dynamic support/resistance "
+             + "levels that update with each new confirmed signal.")
+
+int linesPerSide = input.int(5, "Lines Per Side",
+     minval = 1, maxval = 250, group = GRP_LOCALEND,
+     tooltip = "Maximum number of Local End lines kept per direction. "
+             + "Total lines on chart = up to 2 × N (support + resistance). "
+             + "Older lines are automatically removed when the limit is reached.")
+
+bool showPriceLabels = input.bool(true, "Price Labels", group = GRP_LOCALEND,
+     tooltip = "Display the exact price level next to each Local End line "
+             + "at the right edge of the chart. Labels follow the chart "
+             + "as new bars form, keeping S/R levels readable at a glance.")
+
+// ── Signal Mode ──────────────────────────────────────────────
+string GRP_SIGNAL = "Signal Mode"
+
+string signalMode = input.string("Confirmed", "Detection",
+     options = ["Live", "Confirmed"], group = GRP_SIGNAL,
+     tooltip = "How breakout signals are validated. "
+             + "Live detects breakouts intrabar for fast scalping entries; "
+             + "signals appear as circles (provisional) and may vanish "
+             + "before bar close. If the signal holds, the circle is "
+             + "replaced by a solid triangle at close. "
+             + "Local End lines, bar coloring, direction, and strength "
+             + "update only at bar close to prevent phantom levels. "
+             + "Confirmed waits for bar close; signals always appear "
+             + "directly as solid triangles that never disappear.")
+
+int persistBars = input.int(0, "Persistence Filter", minval = 0, maxval = 10,
+     group = GRP_SIGNAL,
+     tooltip = "Confirmed mode only; ignored in Live mode. "
+             + "When above 0, a breakout must hold for N additional bar closes "
+             + "before the signal is validated. The close must remain above "
+             + "the midrange level recorded at breakout time (bullish) or "
+             + "below it (bearish) throughout the holding period. "
+             + "The reference midrange is frozen at breakout, not recalculated, "
+             + "so the threshold stays stable during the holding window. "
+             + "If this condition fails on any bar, the pending signal is "
+             + "cancelled. A new signal in the opposite direction also cancels. "
+             + "Signal strength is measured from the original breakout bar. "
+             + "0 fires immediately at bar close (default). "
+             + "1-2 is effective for filtering whipsaws in volatile markets.")
+
+// ── Timeframe ────────────────────────────────────────────────
+string GRP_TF = "Timeframe"
+
+string sourceTf = input.timeframe("60", "Source Timeframe", group = GRP_TF,
+     tooltip = "Timeframe whose OHLC data feeds all calculations. "
+             + "Leave blank to use the chart's own resolution. "
+             + "When a higher TF is selected, the indicator rebuilds "
+             + "each HTF bar from chart-TF data and locks values at its close, "
+             + "so signals appear only once per HTF bar (no repaint). "
+             + "Cross detection on Local End lines also operates on this TF. "
+             + "Default 60 min smooths signals on sub-hour charts.")
+
+// ── Info Table ───────────────────────────────────────────────
+string GRP_TABLE = "Info Table"
+
+bool showTable = input.bool(true, "Show Table", group = GRP_TABLE,
+     tooltip = "Display a compact dashboard in the corner of the chart "
+             + "showing the current direction, signal strength, "
+             + "and distance to the nearest support/resistance levels.")
+
+string tablePosition = input.string("Top Right", "Position",
+     options = ["Top Left", "Top Right", "Bottom Left", "Bottom Right"],
+     group = GRP_TABLE,
+     tooltip = "Corner of the chart where the info table is displayed.")
+
+// ═══════════════════════════════════════════════════════════════
+// §2 — HELPERS
+// ═══════════════════════════════════════════════════════════════
+
+// Returns the appropriate price unit for the current instrument.
+// Forex: standard pip (0.0001, or 0.01 for JPY pairs).
+// Other: minimum tick size, with 1e-10 epsilon guard for exotics.
+f_tickUnit() =>
+    syminfo.type == "forex"
+         ? (syminfo.currency == "JPY" ? 0.01 : 0.0001)
+         : math.max(syminfo.mintick, 1e-10)
+
+bool isForex = syminfo.type == "forex"
+
+// Resolves a position string to a position.* constant
+f_tablePos(string pos) =>
+    switch pos
+        "Top Left"     => position.top_left
+        "Top Right"    => position.top_right
+        "Bottom Left"  => position.bottom_left
+        "Bottom Right" => position.bottom_right
+        => position.top_right
+
+// Signal strength: normalized 1.0–5.0× (floor 1.0 because any confirmed signal is meaningful)
+f_strength(float bodyR, float breakR) =>
+    math.max(1.0, math.min(math.round((bodyR + breakR) * 5) / 10, 5.0))
+
+// ═══════════════════════════════════════════════════════════════
+// §3 — NO-REPAINT MULTI-TIMEFRAME DATA
+// ═══════════════════════════════════════════════════════════════
+
+string resolvedTf    = sourceTf == "" ? timeframe.period : sourceTf
+int    resolvedTfSec = timeframe.in_seconds(resolvedTf)
+int    chartTfSec    = timeframe.in_seconds(timeframe.period)
+bool   rebuildHTF    = resolvedTfSec > chartTfSec
+
+// Scale the ATR period so that N "source TF bars" of data are always used,
+// regardless of the chart resolution. On a 5-min chart with a 60-min source,
+// atrPeriod 21 becomes 21 × 12 = 252 chart bars ≈ 21 hours of unique data.
+int tfRatio         = rebuildHTF ? math.max(1, math.round(float(resolvedTfSec) / chartTfSec)) : 1
+int effectivePeriod = atrPeriod * tfRatio
+
+var float srcHigh  = na
+var float srcLow   = na
+var float srcClose = na
+var float srcOpen  = na
+
+if rebuildHTF
+    // Rebuild the HTF bar tick-by-tick from chart-TF data.
+    // Uses time() boundary detection instead of bar_index modulo
+    // to guarantee alignment with real HTF session boundaries.
+    bool isNewHTFBar = ta.change(time(resolvedTf)) != 0
+
+    varip float htfHigh  = na
+    varip float htfLow   = na
+    varip float htfOpen  = na
+    varip float htfClose = na
+
+    if isNewHTFBar
+        // Freeze completed HTF bar before resetting accumulators
+        if not na(htfHigh)
+            srcHigh  := htfHigh
+            srcLow   := htfLow
+            srcClose := htfClose
+            srcOpen  := htfOpen
+        // Begin new HTF bar
+        htfOpen := open
+        htfHigh := high
+        htfLow  := low
+    else
+        htfHigh := math.max(nz(htfHigh, high), high)
+        htfLow  := math.min(nz(htfLow,  low),  low)
+
+    htfClose := close
+else
+    // Same or lower TF: standard request.security() with no lookahead
+    [rHigh, rLow, rClose, rOpen] = request.security(
+         syminfo.tickerid, resolvedTf,
+         [high, low, close, open],
+         barmerge.gaps_off,
+         barmerge.lookahead_off)
+    srcHigh  := rHigh
+    srcLow   := rLow
+    srcClose := rClose
+    srcOpen  := rOpen
+
+// ═══════════════════════════════════════════════════════════════
+// §4 — VOLATILITY BANDS & BODY FILTER
+// ═══════════════════════════════════════════════════════════════
+
+// ── Adaptive bands ───────────────────────────────────────────
+float clStdev  = ta.stdev(srcClose, effectivePeriod)
+float avgStdev = ta.sma(clStdev, effectivePeriod)
+float volRatio = nz(clStdev / nz(avgStdev, 1e-10))
+float volCoef  = math.min(volRatio, 2)
+
+float midRange    = (srcHigh + srcLow) * 0.5
+float upperSpread = ta.median(srcHigh  - midRange, effectivePeriod) * upperCoef * volCoef
+float lowerSpread = ta.median(midRange - srcLow,   effectivePeriod) * lowerCoef * volCoef
+float bandUpper   = midRange + upperSpread
+float bandLower   = midRange - lowerSpread
+float bandWidth   = bandUpper - bandLower
+float breakThresh = bandWidth * 0.8
+
+// ── Source-TF True Range & ATR ───────────────────────────────
+// Computed from src data (not chart TR) so that the Adaptive filter
+// uses the correct volatility reference in MTF mode.
+float srcTR  = math.max(srcHigh - srcLow,
+                   math.max(math.abs(srcHigh - nz(srcClose[1])),
+                            math.abs(srcLow  - nz(srcClose[1]))))
+float srcATR = ta.sma(srcTR, effectivePeriod)
+
+// ── Universal body-size filter ───────────────────────────────
+// Adaptive: percentage of current ATR — auto-normalizes across
+//   any instrument and any volatility regime without recalibration.
+// Tick/Pip: fixed price distance for manual control.
+float priceFilter = switch filterUnit
+    "Adaptive" => (filterValue / 100) * nz(srcATR, 1e-10)
+    "Pip"      => isForex ? filterValue * f_tickUnit()
+                          : filterValue * f_tickUnit() * 10
+    =>            filterValue * f_tickUnit()
+
+// ═══════════════════════════════════════════════════════════════
+// §5 — BREAKOUT CONDITIONS
+// ═══════════════════════════════════════════════════════════════
+
+var string lastDirection = "none"
+
+string prevDirection = na(lastDirection[1]) ? "none" : lastDirection[1]
+
+bool isUpperBreak = srcClose > bandUpper[1]
+     and srcClose > bandUpper
+     and (srcClose - midRange) > breakThresh
+
+bool isLowerBreak = srcClose < bandLower[1]
+     and srcClose < bandLower
+     and (midRange - srcClose) > breakThresh
+
+bool rawBullish = isUpperBreak and not isLowerBreak
+     and (srcClose - srcOpen) >= priceFilter
+     and prevDirection != "bull"
+
+bool rawBearish = isLowerBreak and not isUpperBreak
+     and (srcOpen - srcClose) >= priceFilter
+     and prevDirection != "bear"
+
+// ═══════════════════════════════════════════════════════════════
+// §6 — SIGNAL MODE
+// ═══════════════════════════════════════════════════════════════
+
+bool isLiveMode = signalMode == "Live"
+bool usePersist = not isLiveMode and persistBars > 0
+
+// ═══════════════════════════════════════════════════════════════
+// §7 — SIGNAL ENGINE
+// ═══════════════════════════════════════════════════════════════
+
+// ── Persistence state ────────────────────────────────────────
+// When a raw breakout fires in persistence mode, the engine
+// snapshots the breakout bar's context (midRange, bodyR, breakR)
+// and holds it frozen while counting N consecutive confirming closes.
+// The midRange reference is fixed so the threshold doesn't shift
+// during the holding window.
+var int   bullHoldCount = 0
+var int   bearHoldCount = 0
+var bool  bullPending   = false
+var bool  bearPending   = false
+var float pendingMid    = na       // frozen midRange from breakout bar
+var float pendingBodyR  = na       // frozen body ratio for strength
+var float pendingBreakR = na       // frozen breakout distance ratio
+
+// ── Confirmed state, strength, and regime flips ──────────────
+var bool  confirmedBull = false
+var bool  confirmedBear = false
+var float lastStrength  = 0.0
+bool      flipBull      = false
+bool      flipBear      = false
+bool      pendingStart  = false    // true on the bar where pending begins (for visual)
+
+// Reset per-bar triggers
+confirmedBull := false
+confirmedBear := false
+
+if barstate.isconfirmed
+    if usePersist
+        // ── Process pending bull ─────────────────────────
+        if bullPending
+            if srcClose > pendingMid
+                bullHoldCount += 1
+                if bullHoldCount >= persistBars
+                    confirmedBull := true
+                    bullPending   := false
+                    bullHoldCount := 0
+            else
+                // Price fell back below frozen midRange — cancel
+                bullPending   := false
+                bullHoldCount := 0
+
+        // ── Process pending bear ─────────────────────────
+        if bearPending
+            if srcClose < pendingMid
+                bearHoldCount += 1
+                if bearHoldCount >= persistBars
+                    confirmedBear := true
+                    bearPending   := false
+                    bearHoldCount := 0
+            else
+                bearPending   := false
+                bearHoldCount := 0
+
+        // ── New raw signal → snapshot context & start persistence
+        if not confirmedBull and not confirmedBear
+            if rawBullish and not bullPending
+                bullPending   := true
+                bullHoldCount := 0
+                // Freeze breakout-bar context
+                pendingMid    := midRange
+                pendingBodyR  := nz((srcClose - srcOpen)  / priceFilter)
+                pendingBreakR := nz((srcClose - midRange) / math.max(breakThresh, 1e-10))
+                // Cancel opposite
+                bearPending   := false
+                bearHoldCount := 0
+                pendingStart  := true
+            if rawBearish and not bearPending
+                bearPending   := true
+                bearHoldCount := 0
+                // Freeze breakout-bar context
+                pendingMid    := midRange
+                pendingBodyR  := nz((srcOpen - srcClose)  / priceFilter)
+                pendingBreakR := nz((midRange - srcClose) / math.max(breakThresh, 1e-10))
+                // Cancel opposite
+                bullPending   := false
+                bullHoldCount := 0
+                pendingStart  := true
+    else
+        // ── No persistence: immediate confirmation ───────
+        if rawBullish
+            confirmedBull := true
+        if rawBearish
+            confirmedBear := true
+
+    // ── Update direction, strength, and detect regime flips
+    if confirmedBull
+        lastDirection := "bull"
+        if usePersist
+            lastStrength := f_strength(pendingBodyR, pendingBreakR)
+        else
+            float bodyR  = nz((srcClose - srcOpen)  / priceFilter)
+            float breakR = nz((srcClose - midRange) / math.max(breakThresh, 1e-10))
+            lastStrength := f_strength(bodyR, breakR)
+        if prevDirection == "bear"
+            flipBull := true
+
+    if confirmedBear
+        lastDirection := "bear"
+        if usePersist
+            lastStrength := f_strength(pendingBodyR, pendingBreakR)
+        else
+            float bodyR  = nz((srcOpen - srcClose)  / priceFilter)
+            float breakR = nz((midRange - srcClose) / math.max(breakThresh, 1e-10))
+            lastStrength := f_strength(bodyR, breakR)
+        if prevDirection == "bull"
+            flipBear := true
+
+// ── Trigger booleans for plots and alerts ────────────────────
+bool triggerBull = isLiveMode ? rawBullish : confirmedBull
+bool triggerBear = isLiveMode ? rawBearish : confirmedBear
+
+// Visual differentiation:
+// ● Circles  = provisional signal, Live mode intrabar (may still vanish)
+// ▲ Triangles = locked signal, bar is confirmed (permanent on chart)
+bool liveBull   = isLiveMode and rawBullish and not barstate.isconfirmed
+bool liveBear   = isLiveMode and rawBearish and not barstate.isconfirmed
+bool lockedBull = confirmedBull
+bool lockedBear = confirmedBear
+
+// ── Pending state for visual ─────────────────────────────────
+bool pendingIsBull = bullPending
+
+// ═══════════════════════════════════════════════════════════════
+// §8 — LOCAL END LINES & PRICE LABELS
+// ═══════════════════════════════════════════════════════════════
+
+var line[]  supportLines  = array.new<line>()
+var line[]  resistLines   = array.new<line>()
+var label[] supportLabels = array.new<label>()
+var label[] resistLabels  = array.new<label>()
+
+// Push a new line (or label) and evict the oldest if the limit is exceeded
+f_pushLine(line[] lines, line newLine) =>
+    lines.unshift(newLine)
+    if lines.size() > linesPerSide
+        lines.pop().delete()
+
+f_pushLabel(label[] labels, label newLabel) =>
+    labels.unshift(newLabel)
+    if labels.size() > linesPerSide
+        labels.pop().delete()
+
+// Lines and labels are created only on confirmed bars
+if confirmedBull and showLocalEnds and barstate.isconfirmed
+    f_pushLine(supportLines,
+         line.new(bar_index, srcLow, bar_index + 1, srcLow,
+                  extend = extend.left, color = bullColor,
+                  style  = line.style_dashed, width = 1))
+    if showPriceLabels
+        f_pushLabel(supportLabels,
+             label.new(bar_index, srcLow,
+                       str.tostring(srcLow, format.mintick),
+                       style     = label.style_label_left,
+                       color     = color.new(bullColor, 100),
+                       textcolor = bullColor,
+                       size      = size.small))
+
+if confirmedBear and showLocalEnds and barstate.isconfirmed
+    f_pushLine(resistLines,
+         line.new(bar_index, srcHigh, bar_index + 1, srcHigh,
+                  extend = extend.left, color = bearColor,
+                  style  = line.style_dashed, width = 1))
+    if showPriceLabels
+        f_pushLabel(resistLabels,
+             label.new(bar_index, srcHigh,
+                       str.tostring(srcHigh, format.mintick),
+                       style     = label.style_label_left,
+                       color     = color.new(bearColor, 100),
+                       textcolor = bearColor,
+                       size      = size.small))
+
+// Keep lines and labels anchored to the right edge (last bar only for performance)
+if barstate.islast
+    if supportLines.size() > 0
+        for i = 0 to supportLines.size() - 1
+            supportLines.get(i).set_x2(bar_index)
+    if resistLines.size() > 0
+        for i = 0 to resistLines.size() - 1
+            resistLines.get(i).set_x2(bar_index)
+    if showPriceLabels
+        if supportLabels.size() > 0
+            for i = 0 to supportLabels.size() - 1
+                supportLabels.get(i).set_x(bar_index)
+        if resistLabels.size() > 0
+            for i = 0 to resistLabels.size() - 1
+                resistLabels.get(i).set_x(bar_index)
+
+// ═══════════════════════════════════════════════════════════════
+// §9 — CROSS DETECTION (all active lines)
+// ═══════════════════════════════════════════════════════════════
+
+// Manual cross detection across all lines in an array.
+// Uses raw comparison instead of ta.crossover/ta.crossunder
+// because ta.* functions rely on internal state that cannot
+// be evaluated per-line inside a loop.
+f_anyCross(line[] lines, float src, float prevSrc, bool isOver) =>
+    bool result = false
+    if lines.size() > 0 and not na(src) and not na(prevSrc)
+        for i = 0 to lines.size() - 1
+            float px = lines.get(i).get_price(bar_index)
+            if not na(px)
+                if isOver
+                    if prevSrc <= px and src > px
+                        result := true
+                        break
+                else
+                    if prevSrc >= px and src < px
+                        result := true
+                        break
+    result
+
+// Returns the price and distance of the nearest line in an array
+f_nearestLevel(line[] lines, float price) =>
+    float nearest = na
+    float minDist = na
+    if lines.size() > 0 and not na(price)
+        for i = 0 to lines.size() - 1
+            float px = lines.get(i).get_price(bar_index)
+            if not na(px)
+                float d = math.abs(price - px)
+                if na(minDist) or d < minDist
+                    minDist := d
+                    nearest := px
+    [nearest, minDist]
+
+float prevClose = srcClose[1]
+
+bool xOverAnySupport  = f_anyCross(supportLines, srcClose, prevClose, true)
+bool xUnderAnySupport = f_anyCross(supportLines, srcClose, prevClose, false)
+bool xOverAnyResist   = f_anyCross(resistLines,  srcClose, prevClose, true)
+bool xUnderAnyResist  = f_anyCross(resistLines,  srcClose, prevClose, false)
+
+// Nearest S/R levels for the info table
+// nearestDist values available for future use (e.g. distance-based alerts)
+[nearestSup, nearestSupDist] = f_nearestLevel(supportLines, srcClose)
+[nearestRes, nearestResDist] = f_nearestLevel(resistLines,  srcClose)
+
+// ═══════════════════════════════════════════════════════════════
+// §10 — BAR COLORING
+// ═══════════════════════════════════════════════════════════════
+
+// Active signals take priority over regime tint so a bullish triangle
+// on a previously-bearish bar never shows a conflicting bear shade.
+// Sequential override: regime tint first, then signal color overwrites.
+color barCol = na
+if showBarColors
+    if lastDirection == "bull"
+        barCol := color.new(bullColor, 50)
+    if lastDirection == "bear"
+        barCol := color.new(bearColor, 50)
+    if triggerBull
+        barCol := bullColor
+    if triggerBear
+        barCol := bearColor
+
+barcolor(barCol)
+
+// ═══════════════════════════════════════════════════════════════
+// §11 — INFO TABLE
+// ═══════════════════════════════════════════════════════════════
+
+if showTable
+    var table dash = table.new(f_tablePos(tablePosition), 2, 7,
+         bgcolor      = color.new(chart.bg_color, 10),
+         border_color = color.new(chart.fg_color, 80),
+         border_width = 1,
+         frame_color  = color.new(chart.fg_color, 60),
+         frame_width  = 1)
+
+    color  labelCol = color.new(chart.fg_color, 40)
+    color  valueCol = chart.fg_color
+    string SZ       = size.small
+
+    // Row 0 — Title
+    dash.cell(0, 0, "APC", text_color = valueCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 0, syminfo.ticker, text_color = valueCol, text_size = SZ,
+         text_halign = text.align_left)
+
+    // Row 1 — Direction
+    string dirText = switch lastDirection
+        "bull" => "▲ BULL"
+        "bear" => "▼ BEAR"
+        =>        "— FLAT"
+    color dirColor = switch lastDirection
+        "bull" => bullColor
+        "bear" => bearColor
+        =>        labelCol
+    dash.cell(0, 1, "Direction", text_color = labelCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 1, dirText, text_color = dirColor, text_size = SZ,
+         text_halign = text.align_left)
+
+    // Row 2 — Signal Strength
+    string strText = lastDirection == "none" ? "—" : str.tostring(lastStrength, "#.#") + "×"
+    dash.cell(0, 2, "Strength", text_color = labelCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 2, strText, text_color = valueCol, text_size = SZ,
+         text_halign = text.align_left)
+
+    // Row 3 — Mode
+    string modeText = isLiveMode ? "LIVE" : usePersist ? str.tostring(persistBars) + "-BAR" : "CLOSE"
+    color modeColor = isLiveMode ? color.orange : valueCol
+    dash.cell(0, 3, "Mode", text_color = labelCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 3, modeText, text_color = modeColor, text_size = SZ,
+         text_halign = text.align_left)
+
+    // Row 4 — Filter (active unit + resolved price value)
+    string fltUnit = switch filterUnit
+        "Adaptive" => str.tostring(filterValue, "#.#") + "% ATR"
+        "Pip"      => str.tostring(filterValue, "#") + " pip"
+        =>            str.tostring(filterValue, "#") + " tick"
+    string fltPrice = na(priceFilter) ? "" : " (" + str.tostring(priceFilter, format.mintick) + ")"
+    dash.cell(0, 4, "Filter", text_color = labelCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 4, fltUnit + fltPrice, text_color = valueCol, text_size = SZ,
+         text_halign = text.align_left)
+
+    // Row 5 — Nearest Support (price + distance)
+    string supText = na(nearestSup) ? "—" : str.tostring(nearestSup, format.mintick)
+    string supDist = na(nearestSupDist) ? "" : " (" + str.tostring(nearestSupDist / syminfo.mintick, "#") + "t)"
+    dash.cell(0, 5, "Support", text_color = labelCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 5, supText + supDist, text_color = bullColor, text_size = SZ,
+         text_halign = text.align_left)
+
+    // Row 6 — Nearest Resistance (price + distance)
+    string resText = na(nearestRes) ? "—" : str.tostring(nearestRes, format.mintick)
+    string resDist = na(nearestResDist) ? "" : " (" + str.tostring(nearestResDist / syminfo.mintick, "#") + "t)"
+    dash.cell(0, 6, "Resistance", text_color = labelCol, text_size = SZ,
+         text_halign = text.align_right)
+    dash.cell(1, 6, resText + resDist, text_color = bearColor, text_size = SZ,
+         text_halign = text.align_left)
+
+// ═══════════════════════════════════════════════════════════════
+// §12 — PLOTS
+// ═══════════════════════════════════════════════════════════════
+
+// Locked signals → solid triangles (permanent on chart history)
+plotshape(showLabels and lockedBull, "Bullish Signal", shape.triangleup,
+          location.belowbar, bullColor, size = size.tiny)
+plotshape(showLabels and lockedBear, "Bearish Signal", shape.triangledown,
+          location.abovebar, bearColor, size = size.tiny)
+
+// Live provisional → circles (Live mode only, vanish if signal doesn't hold at close)
+plotshape(showLabels and liveBull, "Live Bull", shape.circle,
+          location.belowbar, color.new(bullColor, 30), size = size.tiny)
+plotshape(showLabels and liveBear, "Live Bear", shape.circle,
+          location.abovebar, color.new(bearColor, 30), size = size.tiny)
+
+// Pending start marker (small diamond on the breakout bar when persistence begins)
+plotshape(showLabels and pendingStart and pendingIsBull,
+          "Pending Bull", shape.diamond,
+          location.belowbar, color.new(bullColor, 50), size = size.tiny)
+plotshape(showLabels and pendingStart and not pendingIsBull,
+          "Pending Bear", shape.diamond,
+          location.abovebar, color.new(bearColor, 50), size = size.tiny)
+
+// Bands use inverted colors: upper = bear zone, lower = bull zone (signal logic convention)
+plot(showBands ? bandUpper : na, "Upper Band", color.new(bearColor, 30), linewidth = 2)
+plot(showBands ? bandLower : na, "Lower Band", color.new(bullColor, 30), linewidth = 2)
+
+// ═══════════════════════════════════════════════════════════════
+// §13 — ALERTS  (10 alertconditions)
+// ═══════════════════════════════════════════════════════════════
+
+// Breakout signals (fire based on Detection mode: intrabar in Live, at close in Confirmed)
+alertcondition(triggerBull,
+     "Bullish Breakout",
+     "ATR Pip Control — Bullish breakout on {{ticker}} at {{close}}.")
+alertcondition(triggerBear,
+     "Bearish Breakout",
+     "ATR Pip Control — Bearish breakout on {{ticker}} at {{close}}.")
+
+// Confirmed breakout (always at bar close, regardless of Detection mode)
+// In Live mode, use these as a second-stage confirmation after the early alert.
+// In Confirmed mode, these fire at the same time as the breakout alerts above.
+alertcondition(lockedBull,
+     "Bullish Breakout (Confirmed)",
+     "ATR Pip Control — Bullish breakout confirmed on {{ticker}} at {{close}}.")
+alertcondition(lockedBear,
+     "Bearish Breakout (Confirmed)",
+     "ATR Pip Control — Bearish breakout confirmed on {{ticker}} at {{close}}.")
+
+// Local End line interactions (any active line)
+alertcondition(xOverAnySupport,
+     "Support Reclaimed",
+     "ATR Pip Control — {{ticker}}: price crossed above an active Local End support at {{close}}.")
+alertcondition(xUnderAnySupport,
+     "Support Broken",
+     "ATR Pip Control — {{ticker}}: price crossed below an active Local End support at {{close}}.")
+alertcondition(xOverAnyResist,
+     "Resistance Broken",
+     "ATR Pip Control — {{ticker}}: price crossed above an active Local End resistance at {{close}}.")
+alertcondition(xUnderAnyResist,
+     "Resistance Rejected",
+     "ATR Pip Control — {{ticker}}: price crossed below an active Local End resistance at {{close}}.")
+
+// Regime change (confirmed direction flip, excludes the initial "none" state)
+alertcondition(flipBull,
+     "Regime Flip: Bullish",
+     "ATR Pip Control — Regime changed to bullish on {{ticker}} at {{close}}.")
+alertcondition(flipBear,
+     "Regime Flip: Bearish",
+     "ATR Pip Control — Regime changed to bearish on {{ticker}} at {{close}}.")
