@@ -1,5 +1,5 @@
 # Published
 
-Scripts terminés, testés et publiés sur TradingView.
+Finished, tested scripts published on TradingView.
 
-Pensez à indiquer le lien de publication TradingView dans l'en-tête de chaque script.
+Remember to add the TradingView publication link to each script's header.

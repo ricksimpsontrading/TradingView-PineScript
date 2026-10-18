@@ -1,3 +1,3 @@
 # Work in progress
 
-Scripts en cours de développement : fonctionnels, mais pas encore finalisés ni publiés.
+Scripts under active development: functional, but not yet finalized or published.

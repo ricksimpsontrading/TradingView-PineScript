@@ -1,34 +1,34 @@
 # TradingView PineScript
 
-Mes scripts Pine Script pour TradingView : indicateurs et stratégies.
+My Pine Script code for TradingView: indicators and strategies.
 
-## Organisation
+## Structure
 
-| Dossier | Contenu |
+| Folder | Contents |
 |---|---|
-| [Published](Published/) | Scripts terminés, testés et publiés sur TradingView |
-| [Work-in-progress](Work-in-progress/) | Scripts en cours de développement |
-| [Experimental](Experimental/) | Idées, prototypes et tests |
+| [Published](Published/) | Finished, tested scripts published on TradingView |
+| [Work-in-progress](Work-in-progress/) | Scripts under active development |
+| [Experimental](Experimental/) | Ideas, prototypes and tests |
 
-## Cycle de vie d'un script
+## Script lifecycle
 
 ```
 Experimental  →  Work-in-progress  →  Published
 ```
 
-Pour faire passer un script d'un dossier à l'autre dans Working Copy : appui long sur le fichier → **Move**, puis **Commit** + **Push**. L'historique du fichier est conservé.
+To move a script from one folder to another in Working Copy: long-press the file → **Move**, then **Commit** + **Push**. The file's history is preserved.
 
 ## Conventions
 
-- Extension `.pine` pour chaque script
-- Noms sans espaces ni accents : `rsi-divergence.pine`, `ema-cross-strategy.pine`
-- Un en-tête en haut de chaque script :
+- `.pine` extension for every script
+- File names without spaces or accents: `rsi-divergence.pine`, `ema-cross-strategy.pine`
+- A header at the top of every script:
 
 ```pine
-// Nom         : RSI Divergence
+// Name        : RSI Divergence
 // Version     : 1.0
-// Description : Détecte les divergences entre le prix et le RSI
-// TradingView : (lien de publication, si publié)
+// Description : Detects divergences between price and RSI
+// TradingView : (publication link, if published)
 
 //@version=6
 indicator("RSI Divergence", overlay = false)

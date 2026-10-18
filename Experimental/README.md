@@ -1,3 +1,3 @@
 # Experimental
 
-Idées, prototypes et tests. Les scripts de ce dossier ne sont pas garantis fonctionnels.
+Ideas, prototypes and tests. Scripts in this folder are not guaranteed to work.
