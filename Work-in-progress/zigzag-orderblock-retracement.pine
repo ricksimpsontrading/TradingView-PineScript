@@ -1,0 +1,2333 @@
+// This Pine Script™ code is subject to the terms of the ZigZag OrderBlock Retracement License Agreement.
+// Unauthorized copying, modification, distribution, or use of this code, via any medium, is strictly prohibited.
+// License Agreement is available at: https://ricksimpsontrading.com/license
+// © 2024–2026 RickSimpson. All Rights Reserved.
+//
+// ZigZag OrderBlock Retracement
+// Version: 3.0.0
+// Author:  Rick Simpson
+// Contact: support@ricksimpsontrading.com
+
+//@version=6
+indicator(
+     title            = 'ZigZag OrderBlock Retracement'
+   , overlay          = true
+   , max_bars_back    = 1000
+   , max_lines_count  = 500
+   , max_labels_count = 500
+   , max_boxes_count  = 500
+ )
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §1 — CONSTANTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Group Labels ─────────────────────────────────────────────────────────────
+GRP_ZZ1       = 'ZigZag Layer 1'
+GRP_ZZ2       = 'ZigZag Layer 2'
+GRP_ZZ3       = 'ZigZag Layer 3'
+GRP_ZZ4       = 'ZigZag Layer 4'
+GRP_ZZ_STYLE  = 'ZigZag Appearance'
+GRP_OB        = 'Order Blocks'
+GRP_LEVELS    = 'Zones'
+GRP_TABLE     = 'Dashboard'
+GRP_IPDA      = 'Institutional Ranges'
+GRP_ADVANCED  = 'Advanced'
+
+// ── Defaults (TradingView standard theme-agnostic palette) ───────────────────
+COLOR_BEAR    = #F23645
+COLOR_BULL    = #089981
+COLOR_RANGE   = #FF9800
+
+// ── Internal Limits ──────────────────────────────────────────────────────────
+MAX_OB_LABELS = 40
+MAX_LEVELS    = 200
+MAX_LIQ       = 50
+
+// ── Enums ────────────────────────────────────────────────────────────────────
+enum LineStyle
+    Solid   = 'Solid'
+    Dotted  = 'Dotted'
+    Dashed  = 'Dashed'
+
+enum TablePos
+    TopRight    = 'Top Right'
+    TopLeft     = 'Top Left'
+    BottomRight = 'Bottom Right'
+    BottomLeft  = 'Bottom Left'
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §2 — INPUTS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── §2a ZigZag Layers ────────────────────────────────────────────────────────
+bool   showZZ1        = input.bool  (true,        'Display',          group = GRP_ZZ1, tooltip = 'Show ZigZag layer 1 — the fastest layer. Tracks short-term swings using 20 bars by default.')
+int    zzLength1      = input.int   (20,          'Length',           group = GRP_ZZ1, minval = 2, maxval = 500, tooltip = 'How many candles to analyze when detecting turning points. Lower = more sensitive (catches small swings). Higher = fewer, larger swings. Default 20 is good for short-term structure.')
+color  zzBearCol1     = input.color (COLOR_BEAR,  'Bear',             group = GRP_ZZ1, inline = 'c1')
+color  zzBullCol1     = input.color (COLOR_BULL,  'Bull',             group = GRP_ZZ1, inline = 'c1')
+color  zzRangeCol1    = input.color (COLOR_RANGE, 'Range',            group = GRP_ZZ1, inline = 'c1', tooltip = 'Colors for ZigZag segments. Bear: price makes a lower swing. Bull: price makes a higher swing. Range: price stays within the previous swing.')
+
+bool   showZZ2        = input.bool  (true,        'Display',          group = GRP_ZZ2, tooltip = 'Show ZigZag layer 2 — the medium layer. Captures intermediate swings (40 bars default).')
+int    zzLength2      = input.int   (40,          'Length',           group = GRP_ZZ2, minval = 2, maxval = 500, tooltip = 'How many candles to analyze on layer 2. Default 40 captures intermediate swings.')
+color  zzBearCol2     = input.color (COLOR_BEAR,  'Bear',             group = GRP_ZZ2, inline = 'c2')
+color  zzBullCol2     = input.color (COLOR_BULL,  'Bull',             group = GRP_ZZ2, inline = 'c2')
+color  zzRangeCol2    = input.color (COLOR_RANGE, 'Range',            group = GRP_ZZ2, inline = 'c2', tooltip = 'Colors for ZigZag segments. Bear: price makes a lower swing. Bull: price makes a higher swing. Range: price stays within the previous swing.')
+
+bool   showZZ3        = input.bool  (false,       'Display',          group = GRP_ZZ3, tooltip = 'Show ZigZag layer 3 — the slow layer. Identifies larger trend structure (75 bars default).')
+int    zzLength3      = input.int   (75,          'Length',           group = GRP_ZZ3, minval = 2, maxval = 500, tooltip = 'How many candles to analyze on layer 3. Default 75 identifies larger trend moves.')
+color  zzBearCol3     = input.color (COLOR_BEAR,  'Bear',             group = GRP_ZZ3, inline = 'c3')
+color  zzBullCol3     = input.color (COLOR_BULL,  'Bull',             group = GRP_ZZ3, inline = 'c3')
+color  zzRangeCol3    = input.color (COLOR_RANGE, 'Range',            group = GRP_ZZ3, inline = 'c3', tooltip = 'Colors for ZigZag segments. Bear: price makes a lower swing. Bull: price makes a higher swing. Range: price stays within the previous swing.')
+
+bool   showZZ4        = input.bool  (false,       'Display',          group = GRP_ZZ4, tooltip = 'Show ZigZag layer 4 — the macro layer. Reveals major structural pivots (125 bars default).')
+int    zzLength4      = input.int   (125,         'Length',           group = GRP_ZZ4, minval = 2, maxval = 500, tooltip = 'How many candles to analyze on layer 4. Default 125 reveals major structural turning points.')
+color  zzBearCol4     = input.color (COLOR_BEAR,  'Bear',             group = GRP_ZZ4, inline = 'c4')
+color  zzBullCol4     = input.color (COLOR_BULL,  'Bull',             group = GRP_ZZ4, inline = 'c4')
+color  zzRangeCol4    = input.color (COLOR_RANGE, 'Range',            group = GRP_ZZ4, inline = 'c4', tooltip = 'Colors for ZigZag segments. Bear: price makes a lower swing. Bull: price makes a higher swing. Range: price stays within the previous swing.')
+
+// ── §2b ZigZag Appearance ────────────────────────────────────────────────────
+LineStyle zzLineStyle = input.enum(LineStyle.Solid, 'Line Style', group = GRP_ZZ_STYLE, tooltip = 'Visual style for all ZigZag segments.')
+int    zzLineWidth    = input.int   (1,           'Line Width',       group = GRP_ZZ_STYLE, minval = 1, maxval = 4, tooltip = 'Thickness of ZigZag segments (1–4 pixels).')
+bool   showBarColors  = input.bool  (true,        'Bar Coloring',                 group = GRP_ZZ_STYLE, tooltip = 'Tint chart bars based on the current trend direction. Bullish trend uses the support color, bearish trend uses the resistance color. Order Block detection bars use the full color; bars between detections use a lighter shade.')
+bool   showPivotType  = input.bool  (false,       'Display HH / HL / LH / LL',   group = GRP_ZZ_STYLE, tooltip = 'Show swing structure labels at each ZigZag pivot: Higher High, Higher Low, Lower High, Lower Low.')
+bool   showPivotRatio = input.bool  (false,       'Display Swing Ratio',          group = GRP_ZZ_STYLE, tooltip = 'Show the ratio of each swing relative to the previous swing as a number (e.g. 0.75 means 75% of the previous swing).')
+bool   showOTE        = input.bool  (true,        'Display OTE Zone',              group = GRP_ZZ_STYLE, tooltip = 'Show the Optimal Trade Entry zone (61.8%–78.6% Fibonacci retracement) of the last swing on the layer driving the current trend direction. This is the ideal entry zone after a trend shift.')
+
+// ── §2c Order Blocks ─────────────────────────────────────────────────────────
+bool   showOBLabels   = input.bool  (true,        'Show Detection Labels',        group = GRP_OB, tooltip = 'Show small ▲/▼ arrows on the chart where an Order Block is detected. An Order Block is the last candle before a significant price reversal — a zone where institutions likely placed orders.')
+bool   confirmOnClose = input.bool  (true,        'Wait for Bar Close',           group = GRP_OB, tooltip = 'Wait for the candle to fully close before confirming an Order Block. When ON: signals are reliable but appear one candle late. When OFF: signals appear immediately but may disappear if the candle changes direction before closing.')
+bool   showBreakers   = input.bool  (true,        'Breaker Blocks',               group = GRP_OB, tooltip = 'When an Order Block is broken (price closes through the zone), flip it into a Breaker Block in the opposite direction instead of removing it. Breakers are zones where institutions reversed a failed Order Block — they often act as strong support/resistance on the return. Disable to purge broken zones immediately.')
+
+// ── §2d Zones ────────────────────────────────────────────────────────────────
+bool   showLevels     = input.bool  (true,        'Display Zones',             group = GRP_LEVELS, tooltip = 'Display Order Block and Breaker zones on the chart. These are price areas where a significant reversal occurred — marking potential support or resistance for future price action. Tested zones (price touched but held) switch to dotted borders. Breaker zones (flipped Order Blocks) are shown with dashed borders.')
+bool   showLevelLbl   = input.bool  (true,        'Display Price Labels',         group = GRP_LEVELS, tooltip = 'Display price labels at the right edge of each visible zone. Labels show the zone price, role (target ◎ or invalidation ⊘), type (OB or BRK for Breakers), state (fresh/tested), and quality rating (A–D) on hover.')
+color  resistanceCol  = input.color (COLOR_BEAR,  'Resistance',                   group = GRP_LEVELS, tooltip = 'Color for zones acting as resistance (above current price).')
+color  supportCol     = input.color (COLOR_BULL,  'Support',                      group = GRP_LEVELS, tooltip = 'Color for zones acting as support (below current price).')
+LineStyle levelStyle   = input.enum(LineStyle.Solid, 'Border Style',    group = GRP_LEVELS, tooltip = 'Visual style for the border of fresh (untouched) zones. Tested zones automatically switch to dotted, and Breaker zones to dashed.')
+float  zoneTransp     = input.float (75,          'Zone Transparency',             group = GRP_LEVELS, minval = 0, maxval = 100, step = 5, tooltip = 'Controls the baseline transparency of the highest-quality zones. 0 = fully opaque, 100 = invisible. Lower values make high-quality zones more visible. Weaker zones fade automatically toward near-invisible regardless of this setting.')
+
+// ── §2e Dashboard ─────────────────────────────────────────────────────────
+bool   showTable      = input.bool  (true,        'Display Dashboard',            group = GRP_TABLE, tooltip = 'Show a compact dashboard with the current trend direction, target, invalidation, R:R ratio, expected value, layer directions, active session, and institutional range alignment. Breaker zones are marked with ⟐. Hover any row for details.')
+TablePos  tablePosition = input.enum(TablePos.TopRight, 'Position', group = GRP_TABLE, tooltip = 'Corner of the chart where the table is displayed.')
+
+// ── §2f Institutional Ranges ─────────────────────────────────────────────────
+bool   showIPDA       = input.bool  (true,        'Show Ranges',                   group = GRP_IPDA, tooltip = 'Display equilibrium lines for institutional dealing ranges (IPDA). The three ranges (20, 40, 60 trading days) define zones where institutions operate. Price above equilibrium = premium, below = discount.')
+color  ipdaCol60      = input.color (#1848CC,     '60-Day Range',                  group = GRP_IPDA, tooltip = 'Color for the primary dealing range (60 trading days). This is the longest institutional horizon.')
+color  ipdaCol40      = input.color (#2962FF,     '40-Day Range',                  group = GRP_IPDA, tooltip = 'Color for the intermediate dealing range (40 trading days).')
+color  ipdaCol20      = input.color (#5B8DEF,     '20-Day Range',                  group = GRP_IPDA, tooltip = 'Color for the short-term dealing range (20 trading days).')
+
+// ── §2g Advanced ─────────────────────────────────────────────────────────────
+bool   autoScale      = input.bool  (false,       'Auto-Scale Lengths',           group = GRP_ADVANCED, tooltip = 'Automatically adjust ZigZag lookback based on the chart timeframe. Your Length values are calibrated for 1H charts. On lower timeframes (e.g. 5m), the indicator lengthens the lookback to filter out noise. On higher timeframes (e.g. Daily), it shortens the lookback to catch available swings. Disable to use your exact Length values on all timeframes.')
+float  displacementMult = input.float(1.5,        'Displacement (× avg candle)',          group = GRP_ADVANCED, minval = 0.0, maxval = 5.0, step = 0.1, tooltip = 'Minimum strength required for an Order Block to be valid. Measured as a multiple of the average candle size (ATR). Example: 1.5 means the price reversal must be at least 1.5× the average candle range. Higher values = fewer but stronger zones. Set to 0 to accept all reversals regardless of strength.')
+float  minMovePct     = input.float (0.0,         'Minimum Swing (%)',            group = GRP_ADVANCED, minval = 0.0, maxval = 50.0, step = 0.1, tooltip = 'Filter out ZigZag swings smaller than this percentage. 0 disables the filter and shows all swings.')
+float  confATRMult    = input.float (0.3,         'Confluence Threshold (× avg candle)',  group = GRP_ADVANCED, minval = 0.05, maxval = 1.0, step = 0.05, tooltip = 'How close two Order Block zones from different ZigZag layers need to be to count as a confluence (★). Measured as a fraction of the average candle size. Example: 0.3 means zones must be within 0.3 × the average candle of each other. Lower = stricter matching. Higher = more lenient. Default 0.3 works well for most markets.')
+int    sweepLookback  = input.int   (10,          'Sweep Lookback',               group = GRP_ADVANCED, minval = 1, maxval = 50, tooltip = 'Maximum number of bars between a liquidity sweep and an Order Block detection for the sweep to count as connected. A sweep occurs when price wicks past an equal high or equal low then closes back — a Judas Swing (fake-out). Only sweeps during London, New York, or Macro windows count — Asia and off-session sweeps are ignored as noise. When an Order Block forms within this window, it receives a quality boost. Default 10 captures most setups.')
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §3 — TYPES
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ZigZag layer state — one instance per ZZ layer (1–4).
+// swingDir tracks the last confirmed direction (+1 bull, -1 bear, 0 unset).
+// segments and pivotLabels are parallel arrays (always same size, synced via
+// unshift/shift/pop).
+type ZZLayer
+    int             length          = 0
+    bool            show            = true
+    color           bearColor       = #F23645
+    color           bullColor       = #089981
+    color           rangeColor      = #FF9800
+    int             swingDir        = 0
+    array<line>     segments        = na
+    array<label>    pivotLabels     = na
+
+// Unified level pool — stores all Order Block zones from all ZZ layers.
+// The first 12 arrays are PARALLEL (always same size, synced via push/shift/remove):
+//   prices, zoneHighs, zoneLows, bars, layerNums, originTypes, states, displacements, killzones, vcis, breakers, sweeps.
+// State machine: 0 = fresh (untouched), 1 = tested (wick touched), 2 = broken.
+//   Regular OB broken → flips to Breaker (originType reverses, state resets to 0).
+//   Breaker broken → purged from pool entirely.
+// Displacement: swing_size / ATR at time of OB creation.
+// Killzones: enriched session code (0=off, 10-13=KZ, 14=Asia, 20-25=macro, -1=na).
+// VCI (Volume Conviction Index): geometric mean of volume surge × body ratio × directional bias at OB creation.
+// Breakers: 0 = regular OB, 1 = breaker (flipped OB that was broken and reversed role).
+// Sweeps: 0 = no sweep preceded this OB, 1 = OB formed after a fresh liquidity sweep.
+// targetEdge/invalidEdge: near-edge and far-edge prices for the active bracket.
+// targetBox/invalidBox: visual zone rectangles for Target mode.
+type LevelPool
+    array<float>    prices          = na
+    array<float>    zoneHighs       = na
+    array<float>    zoneLows        = na
+    array<int>      bars            = na
+    array<int>      layerNums       = na
+    array<int>      originTypes     = na
+    array<int>      states          = na
+    array<float>    displacements   = na
+    array<int>      killzones       = na
+    array<float>    vcis            = na
+    array<int>      breakers        = na
+    array<int>      sweeps          = na
+    float           targetEdge      = na
+    float           invalidEdge     = na
+    box             targetBox       = na
+    box             invalidBox      = na
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §4 — HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Resolve LineStyle enum to Pine line style constant
+f_lineStyle(LineStyle s) =>
+    s == LineStyle.Solid ? line.style_solid : s == LineStyle.Dotted ? line.style_dotted : line.style_dashed
+
+// Resolve TablePos enum to Pine position constant
+f_tablePos() =>
+    (tablePosition == TablePos.TopRight     ? position.top_right    :
+     tablePosition == TablePos.TopLeft      ? position.top_left     :
+     tablePosition == TablePos.BottomRight  ? position.bottom_right :
+                                              position.bottom_left)
+
+// Structural bias: direction of the highest active ZZ layer (macro > micro)
+f_structuralBias(ZZLayer l1, ZZLayer l2, ZZLayer l3, ZZLayer l4) =>
+    int bias = 0
+    if showZZ4 and l4.swingDir != 0
+        bias := l4.swingDir
+    else
+        if showZZ3 and l3.swingDir != 0
+            bias := l3.swingDir
+        else
+            if showZZ2 and l2.swingDir != 0
+                bias := l2.swingDir
+            else
+                bias := l1.swingDir
+    bias
+
+// Safe division denominator (prevents na propagation on first bars)
+f_safeDenom(float val) =>
+    math.max(val, 1e-10)
+
+// Clamp a bar index to be within Pine's drawing limit (~9990 bars from current)
+f_clampBar(int barIdx) =>
+    math.max(barIdx, bar_index - 9990)
+
+// Auto-scale a ZigZag length based on chart timeframe (reference = 1H).
+// Uses square-root scaling: lower TFs get longer lookbacks, higher TFs get shorter.
+// Result is clamped to [2, 500] to match input constraints.
+f_autoScaleLength(int baseLength) =>
+    float refSeconds = 3600.0
+    float tfSeconds  = timeframe.in_seconds()
+    float factor     = math.sqrt(refSeconds / math.max(tfSeconds, 1))
+    int   scaled     = math.round(baseLength * factor)
+    math.max(2, math.min(scaled, 500))
+
+// Killzone / Macro Time code for the candle at barsBack from current bar.
+// Uses New York time (America/New_York) — auto-handles EST/EDT (DST).
+// Returns 0 (off-session/weekend) or an enriched session code:
+//   10 = London (02:00–05:00), 11 = NY Morning (07:00–10:00)
+//   12 = London Close (10:00–12:00), 13 = NY Afternoon (13:30–16:00)
+//   14 = Asia (20:00–01:00) — accumulation session, tier 0 (visible but no sweep impact)
+//   20 = Macro 02:33 (02:33–03:00), 21 = Macro 04:03 (04:03–04:30)
+//   22 = Macro 08:50 (08:50–09:10), 23 = Macro 09:50 (09:50–10:10)
+//   24 = Macro 10:50 (10:50–11:10), 25 = Macro 11:50 (11:50–12:10)
+// Note: -1 is used elsewhere as a sentinel for "no KZ data" (e.g. findPoolMetadata)
+// but this function never returns it.
+// Macros are checked FIRST (higher priority — narrow windows inside killzones).
+// Uses time_close (bar close time) because OBs are confirmed at candle close,
+// not at candle open. A bar opening at 01:00 but closing at 02:00 belongs to London.
+f_killzoneScore(int barsBack) =>
+    int tClose = nz(time_close[barsBack], time[barsBack])
+    int dow = dayofweek(tClose, "America/New_York")
+    bool isWeekday = dow != dayofweek.saturday and dow != dayofweek.sunday
+    int h  = hour(tClose, "America/New_York")
+    int m  = minute(tClose, "America/New_York")
+    int hm = h * 100 + m
+    int code = 0
+    if isWeekday
+        // Macros first (narrow windows, highest priority)
+        if hm >= 233 and hm < 300
+            code := 20
+        else
+            if hm >= 403 and hm < 430
+                code := 21
+            else
+                if hm >= 850 and hm < 910
+                    code := 22
+                else
+                    if hm >= 950 and hm < 1010
+                        code := 23
+                    else
+                        if hm >= 1050 and hm < 1110
+                            code := 24
+                        else
+                            if hm >= 1150 and hm < 1210
+                                code := 25
+                            else
+                                // Killzones (broader windows)
+                                if h >= 2 and h < 5
+                                    code := 10
+                                else
+                                    if h >= 7 and h < 10
+                                        code := 11
+                                    else
+                                        if h >= 10 and h < 12
+                                            code := 12
+                                        else
+                                            if hm >= 1330 and hm < 1600
+                                                code := 13
+                                            else
+                                                // Asia (crosses midnight: 20:00–01:00)
+                                                if h >= 20 or h < 1
+                                                    code := 14
+    code
+
+// Convert enriched session code to tier: 0=off/asia, 1=killzone, 2=macro, -1=na.
+// Asia (14) is tier 0: visible on dashboard but sweeps during Asia are not counted.
+f_kzTier(int code) =>
+    code >= 20 ? 2 : (code >= 10 and code != 14) ? 1 : code < 0 ? -1 : 0
+
+// Convert enriched session code to a human-readable name.
+f_kzName(int code) =>
+    switch code
+        10 => 'London'
+        11 => 'NY Morning'
+        12 => 'London Close'
+        13 => 'NY Afternoon'
+        14 => 'Asia'
+        20 => 'Macro 02:33'
+        21 => 'Macro 04:03'
+        22 => 'Macro 08:50'
+        23 => 'Macro 09:50'
+        24 => 'Macro 10:50'
+        25 => 'Macro 11:50'
+        -1 => '—'
+        => 'Off-hours'
+
+// Session code for the current bar (convenience wrapper).
+f_sessionNow() =>
+    f_killzoneScore(0)
+
+// Next upcoming session from the current NY time.
+// Returns [name, minutesUntil]. Scans the ordered schedule of session starts
+// and returns the first one that hasn't begun yet today, or London tomorrow.
+f_nextSession(int h, int m) =>
+    int now = h * 60 + m
+    // Ordered schedule: [startMinute, code]
+    // London 02:00, Macro 02:33, Macro 04:03, NY Morning 07:00,
+    // Macro 08:50, Macro 09:50, London Close 10:00, Macro 10:50,
+    // Macro 11:50, NY Afternoon 13:30, Asia 20:00
+    array<int> starts = array.from(120, 153, 243, 420, 530, 590, 600, 650, 710, 810, 1200)
+    array<int> codes  = array.from(10, 20, 21, 11, 22, 23, 12, 24, 25, 13, 14)
+    string nextName = 'London'
+    int    nextMin  = (120 + 1440 - now) % 1440
+    if nextMin == 0
+        nextMin := 1440
+    if starts.size() > 0
+        for i = 0 to starts.size() - 1
+            if starts.get(i) > now
+                nextName := f_kzName(codes.get(i))
+                nextMin  := starts.get(i) - now
+                break
+    [nextName, nextMin]
+
+// IPDA alignment score: how many horizons agree with the OB role?
+// Bear OB (resistance) in premium = aligned. Bull OB (support) in discount = aligned.
+// Returns 0.0–1.0 (0/3, 1/3, 2/3, 3/3 horizons aligned).
+f_ipdaAlignment(int originType, int pd20, int pd40, int pd60) =>
+    int aligned = 0
+    if originType == 1
+        if pd20 == 1
+            aligned += 1
+        if pd40 == 1
+            aligned += 1
+        if pd60 == 1
+            aligned += 1
+    if originType == -1
+        if pd20 == -1
+            aligned += 1
+        if pd40 == -1
+            aligned += 1
+        if pd60 == -1
+            aligned += 1
+    aligned / 3.0
+
+// FVG tracking arrays (declared early — populated every bar in §7d.3).
+var array<float> fvgTops    = array.new<float>(0)
+var array<float> fvgBots    = array.new<float>(0)
+var array<int>   fvgBars    = array.new<int>(0)
+var array<int>   fvgDirs    = array.new<int>(0)
+
+// FVG Overlap Score + Balanced Price Range detection.
+// Scans active FVGs for overlap with the OB zone.
+// BPR = a bullish FVG and a bearish FVG overlapping each other at the same price.
+// When an OB sits within a BPR, the zone is at institutional equilibrium — very strong.
+// Returns [score (0.0–1.0), hasBPR (true/false)].
+f_fvgOverlap(float obHigh, float obLow, float atrVal) =>
+    float bestFOS = 0.0
+    bool  bpr     = false
+    float obRange = obHigh - obLow
+    if obRange > 0 and fvgTops.size() > 0
+        // Single FVG overlap (existing logic)
+        for i = 0 to fvgTops.size() - 1
+            float overlap = math.max(0.0, math.min(fvgTops.get(i), obHigh) - math.max(fvgBots.get(i), obLow))
+            float coverage = overlap / obRange
+            float fvgSize  = fvgTops.get(i) - fvgBots.get(i)
+            float fvgStr   = atrVal > 0 ? math.min(2.0, fvgSize / atrVal) : 1.0
+            float fos      = coverage * (0.5 + fvgStr * 0.25)
+            if fos > bestFOS
+                bestFOS := fos
+        // BPR detection: find overlapping bull+bear FVG pairs within the OB zone
+        if fvgTops.size() > 1
+            for i = 0 to fvgTops.size() - 2
+                if not bpr
+                    for j = i + 1 to fvgTops.size() - 1
+                        if not bpr and fvgDirs.get(i) != fvgDirs.get(j)
+                            // BPR zone = intersection of two opposing FVGs
+                            float bprTop = math.min(fvgTops.get(i), fvgTops.get(j))
+                            float bprBot = math.max(fvgBots.get(i), fvgBots.get(j))
+                            if bprTop > bprBot
+                                // BPR exists — check if it overlaps with the OB zone
+                                float bprOvlp = math.max(0.0, math.min(bprTop, obHigh) - math.max(bprBot, obLow))
+                                if bprOvlp > 0
+                                    bpr := true
+                                    bestFOS := math.max(bestFOS, 1.0)
+    [math.min(1.0, bestFOS), bpr]
+
+// Zone strength score (0.0–1.0) combining up to 11 institutional quality factors.
+// Drives the gradient transparency of each zone: stronger = more visible.
+// displacement ≤ 0 or killzone < 0 → factor bypassed (not applicable for this zone).
+f_zoneScore(int confluence, int state, float price, float atrVal, int originBar, float displacement, int killzone, float atrRatio, float ipdaAlign, float vci, float fos, int breaker, int sweep) =>
+    // 1. Confluence: ×1=0.4, ×2=0.6, ×3=0.8, ×4+=1.0
+    float confFactor  = math.min(0.2 + confluence * 0.2, 1.0)
+    // 2. Freshness: fresh=1.0, tested=0.5
+    float freshFactor = state == 0 ? 1.0 : 0.5
+    // 3. Proximity: 1.0 within 2×ATR, fading to 0.3 at 10×ATR
+    float dist        = math.abs(price - close)
+    float normDist    = dist / math.max(atrVal, 1e-10)
+    float proxFactor  = normDist <= 2.0 ? 1.0 : math.max(0.3, 1.0 - (normDist - 2.0) * 0.0875)
+    // 4. Time decay (ATR-adaptive): volatile markets → faster decay
+    int   age          = bar_index - nz(originBar, bar_index)
+    float decayHorizon = math.max(200.0, math.min(1000.0, 500.0 / math.max(atrRatio, 0.5)))
+    float timeFactor   = math.max(0.2, 1.0 - age / decayHorizon)
+    // 5. Displacement: stronger BOS impulse → stronger zone (bypass if ≤ 0)
+    float dispFactor   = displacement <= 0 ? 1.0 : math.min(1.0, 0.4 + displacement * 0.12)
+    // 6. Killzone timing: macro=1.0, killzone=0.85, off-session/Asia=0.6 (bypass if < 0)
+    int   kzT          = f_kzTier(killzone)
+    float kzFactor     = kzT < 0 ? 1.0 : (kzT == 2 ? 1.0 : (kzT == 1 ? 0.85 : 0.6))
+    // 7. IPDA alignment: bypass if 0/3, 1/3=0.67, 2/3=0.83, 3/3=1.0
+    float ipdaFactor   = ipdaAlign <= 0 ? 1.0 : (0.5 + ipdaAlign * 0.5)
+    // 8. Volume Conviction: VCI 0→0.5, VCI 1→0.75, VCI 2+→1.0 (0.0 = bypass)
+    float vciFactor    = vci <= 0 ? 1.0 : math.min(1.0, 0.5 + vci * 0.25)
+    // 9. Gap Overlap: 0%→0.6, 50%→0.8, 100%→1.0 (0.0 = no FVG = neutral)
+    //    BPR (Balanced Price Range) auto-caps score to 1.0 when detected.
+    float fvgFactor    = fos <= 0 ? 1.0 : (0.6 + fos * 0.4)
+    // 10. Breaker bonus: a flipped OB is market-validated → factor 1.0 counted as
+    //     an additional active factor, which raises the geometric mean naturally.
+    //     Regular OBs bypass this (factor 1.0, not counted in nActive).
+    float brkFactor    = 1.0
+    // 11. Liquidity sweep: OB formed after a fresh liquidity sweep (Judas Swing).
+    //     Market-validated entry — smart money took liquidity before reversing at this OB.
+    //     Same geometric mean boost mechanism as brkFactor.
+    float sweepFactor  = 1.0
+    // Adaptive geometric mean: only count non-bypassed factors.
+    // Raw product of N factors in [0,1] collapses toward 0; the Nth root normalizes
+    // the score to the same scale as individual factors (0.0–1.0).
+    float product = confFactor * freshFactor * proxFactor * timeFactor * dispFactor * kzFactor * ipdaFactor * vciFactor * fvgFactor * brkFactor * sweepFactor
+    int   nActive = 4
+    if displacement > 0
+        nActive += 1
+    if killzone >= 0
+        nActive += 1
+    if ipdaAlign > 0
+        nActive += 1
+    if vci > 0
+        nActive += 1
+    if fos > 0
+        nActive += 1
+    if breaker == 1
+        nActive += 1
+    if sweep == 1
+        nActive += 1
+    math.pow(math.max(product, 1e-10), 1.0 / nActive)
+
+// Convert a zone score to box transparency (high score = more visible = lower transparency)
+// zoneTransp input acts as the floor (max visibility for strongest zones).
+// Weakest zones fade to 96% regardless.
+f_zoneTransp(float score) =>
+    float maxTransp = 96.0
+    maxTransp - score * (maxTransp - zoneTransp)
+
+// Convert a zone score to a quality grade letter (A/B/C/D)
+f_zoneGrade(float score) =>
+    score >= 0.70 ? 'A' : score >= 0.55 ? 'B' : score >= 0.40 ? 'C' : 'D'
+
+// Expected Value per unit of risk.
+// Combines historical resolution rate, R:R ratio, and target zone quality into
+// a single forward-looking metric. Positive = setup worth taking over many reps.
+// Quality adjustment: high-grade zones get the full historical win rate;
+// low-grade zones are discounted (assumes weaker zones underperform history).
+// Returns na when insufficient data (< 3 resolved setups or no bracket).
+f_expectedValue(int hits, int total, float rr, float quality) =>
+    float ev = na
+    if total >= 3 and rr > 0
+        float baseP  = hits / math.max(float(total), 1.0)
+        float qualAdj = 0.5 + quality * 0.5
+        float adjP   = math.min(baseP * qualAdj, 0.99)
+        ev := adjP * rr - (1.0 - adjP)
+    ev
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §5 — ZIGZAG ENGINE
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── §5a Detect swing highs/lows from bar history ─────────────────────────────
+// Returns [swDir, pivotHigh, pivotLow]. pivotHigh/Low are non-na only on the bar
+// that IS the swing extreme. swDir = +1 when a new high is detected without a low,
+// -1 when a new low without a high, or the previous swDir as fallback.
+f_calcSwingPivots(int length) =>
+    float pivotHigh = ta.highestbars(high, length) == 0 ? high : na
+    float pivotLow  = ta.lowestbars(low, length)   == 0 ? low  : na
+    int   swDir     = 0
+    int   fallback  = not na(pivotLow) and na(pivotHigh) ? -1 : swDir[1]
+    swDir          := not na(pivotHigh) and na(pivotLow) ?  1 : fallback
+    [swDir, pivotHigh, pivotLow]
+
+// ── §5b Classify swing type (HH/HL/LH/LL) and resolve segment color ─────────
+method resolveSwingType(ZZLayer layer, int dir, float endPrice) =>
+    int swingType = dir
+    if layer.segments.size() > 0
+        line  lastSeg   = layer.segments.get(0)
+        float lastPivot = lastSeg.get_y1()
+        swingType      := (dir * endPrice > dir * lastPivot ? 2 : 1) * dir
+    color segColor = (swingType == 2 ? layer.bullColor : swingType == -2 ? layer.bearColor : layer.rangeColor)
+    [swingType, segColor]
+
+// ── §5c Draw a ZigZag segment line ──────────────────────────────────────────
+method drawSegment(ZZLayer layer, int x1, float y1, int x2, float y2, int dir) =>
+    [swingType, segColor] = layer.resolveSwingType(dir, y2)
+    color visibleColor    = layer.show ? segColor : color(na)
+    line  newSeg          = line.new(x1 = x1, y1 = y1, x2 = x2, y2 = y2, color = visibleColor, width = zzLineWidth, style = f_lineStyle(zzLineStyle))
+    layer.segments.unshift(newSeg)
+
+// ── §5d Draw a pivot label (HH/HL/LH/LL + optional ratio) ───────────────────
+method drawPivotLabel(ZZLayer layer, int x1, int x2, float y1, float y2, int dir) =>
+    label pivotLbl = na
+    if showPivotRatio or showPivotType
+        [swingType, segColor] = layer.resolveSwingType(dir, y2)
+        string typeStr     = (swingType == 2 ? 'HH' : swingType == 1 ? 'LH' : swingType == -1 ? 'HL' : 'LL')
+        float  prevLen     = 0.0
+        float  currLen     = math.abs(y2 - y1)
+        if layer.segments.size() > 0
+            line lastSeg   = layer.segments.get(0)
+            prevLen       := math.abs(lastSeg.get_y2() - lastSeg.get_y1())
+        float  ratio       = math.round(prevLen != 0 ? currLen / prevLen : 0, 3)
+        string labelTxt    = (showPivotType ? typeStr : '') + (showPivotType and showPivotRatio ? ' · ' : '') + (showPivotRatio ? str.tostring(ratio) : '')
+        pivotLbl := label.new(x = x2, y = y2, text = labelTxt, textcolor = segColor, xloc = xloc.bar_index, yloc = yloc.price, color = color.new(segColor, 100), size = size.small, style = dir > 0 ? label.style_label_down : label.style_label_up)
+    layer.pivotLabels.unshift(pivotLbl)
+
+// ── §5e Process a new swing pivot — update or replace last segment ───────────
+// Returns [isBearOB, isBullOB, obPrice, obBar, obZoneHigh, obZoneLow, displacement, vci].
+// On a ZZ direction flip (implicit BOS), scans backward from the swing extreme
+// to locate the last opposing candle — the true Order Block origin.
+// Gate pipeline: (1) Displacement — swing ≥ displacementMult × ATR.
+//                (2) OB scan — find last opposing candle within 20 bars.
+//                (3) Premium/Discount — bear OB must be above midpoint, bull below.
+method processSwing(ZZLayer layer, int dir, bool dirFlipped, float pivotHigh, float pivotLow, float atrVal, float volAvg) =>
+    float pivotPrice  = dir == 1 ? pivotHigh : pivotLow
+    bool  hasPivot    = not na(pivotPrice)
+    // Fallback y1/x1: if no segments yet, use current bar; overridden below when segments exist
+    float y1          = close
+    int   x1          = bar_index
+    int   x2          = bar_index
+    float y2          = pivotPrice
+    bool  isRedundant  = false
+    bool  segmentDrawn = false
+    if hasPivot and layer.segments.size() > 0
+        line  lastSeg = layer.segments.get(0)
+        float lastY   = lastSeg.get_y2()
+        if not dirFlipped
+            if (dir == 1 and pivotPrice < lastY) or (dir == -1 and pivotPrice > lastY)
+                isRedundant := true
+            else
+                layer.segments.shift().delete()
+                label shiftedLbl = layer.pivotLabels.shift()
+                if not na(shiftedLbl)
+                    shiftedLbl.delete()
+        if layer.segments.size() > 0
+            line prevSeg = layer.segments.get(0)
+            x1          := prevSeg.get_x2()
+            y1          := prevSeg.get_y2()
+    if hasPivot and math.abs(y1 - y2) * 100 / f_safeDenom(y1) > minMovePct and not isRedundant
+        layer.drawPivotLabel(x1, x2, y1, y2, dir)
+        layer.drawSegment(x1, y1, x2, y2, dir)
+        layer.swingDir := dir
+        segmentDrawn   := true
+    if layer.segments.size() > layer.length
+        layer.segments.pop().delete()
+        label poppedLbl = layer.pivotLabels.pop()
+        if not na(poppedLbl)
+            poppedLbl.delete()
+    // True Order Block detection: on a ZZ direction flip (implicit BOS),
+    // scan backward from the swing extreme to find the last opposing candle.
+    // Bear OB: last bullish candle (close > open) at or before the swing high.
+    // Bull OB: last bearish candle (close < open) at or before the swing low.
+    // The OB zone is the full range of that candle. If no opposing candle is found
+    // within 20 bars, fall back to the swing extreme bar.
+    bool  isBearOB    = false
+    bool  isBullOB    = false
+    float obPrice     = na
+    int   obBar       = na
+    float obZoneHigh  = na
+    float obZoneLow   = na
+    float dispScore   = 0.0
+    if dirFlipped and segmentDrawn and layer.segments.size() > 1
+        // Displacement gate: swing must be impulsive enough
+        float swingSize = math.abs(y2 - y1)
+        dispScore      := atrVal > 0 ? swingSize / atrVal : 0.0
+        bool  displaced = displacementMult == 0.0 or dispScore >= displacementMult
+        if displaced
+            int swingBB = bar_index - x1
+            if dir == -1
+                isBearOB := true
+                // Scan from swing high backward: find last bullish candle
+                int obBB = swingBB
+                if swingBB >= 0 and swingBB < 1000
+                    for s = swingBB to math.min(swingBB + 20, 4999)
+                        if close[s] > open[s]
+                            obBB := s
+                            break
+                if obBB >= 0 and obBB < 1000
+                    obBar      := bar_index - obBB
+                    obZoneHigh := high[obBB]
+                    obZoneLow  := low[obBB]
+                    obPrice    := high[obBB]
+                else
+                    obBar      := x1
+                    obPrice    := y1
+                    obZoneHigh := y1
+                    obZoneLow  := y1
+            else
+                isBullOB := true
+                // Scan from swing low backward: find last bearish candle
+                int obBB = swingBB
+                if swingBB >= 0 and swingBB < 1000
+                    for s = swingBB to math.min(swingBB + 20, 4999)
+                        if close[s] < open[s]
+                            obBB := s
+                            break
+                if obBB >= 0 and obBB < 1000
+                    obBar      := bar_index - obBB
+                    obZoneHigh := high[obBB]
+                    obZoneLow  := low[obBB]
+                    obPrice    := low[obBB]
+                else
+                    obBar      := x1
+                    obPrice    := y1
+                    obZoneHigh := y1
+                    obZoneLow  := y1
+            // Premium/Discount gate: bear OB must be in premium (above midpoint),
+            // bull OB must be in discount (below midpoint) of the creating swing.
+            // An OB in the wrong half is structurally weak — reject it.
+            if (isBearOB or isBullOB) and not na(obPrice)
+                float swingMid = (y1 + y2) / 2
+                if isBearOB and obPrice < swingMid
+                    isBearOB   := false
+                    obPrice    := na
+                if isBullOB and obPrice > swingMid
+                    isBullOB   := false
+                    obPrice    := na
+    // Volume Conviction Index (VCI): institutional commitment at the OB candle
+    // Combines volume surge, candle body dominance, and directional coherence.
+    float vciScore = 0.0
+    if (isBearOB or isBullOB) and not na(obPrice) and not na(obBar)
+        int obBarsBack = bar_index - obBar
+        if obBarsBack >= 0 and obBarsBack < 1000
+            float volRatio = volAvg > 0 ? volume[obBarsBack] / volAvg : 1.0
+            float bodySize = math.abs(close[obBarsBack] - open[obBarsBack])
+            float candleRng = high[obBarsBack] - low[obBarsBack]
+            float bodyRatio = candleRng > 0 ? bodySize / candleRng : 0.5
+            // Directional coherence: OB candle is the expected opposing candle?
+            // Bear OB = last bullish candle (close > open) → institutional buying before reversal
+            // Bull OB = last bearish candle (close < open) → institutional selling before reversal
+            bool dirMatch = (isBearOB and close[obBarsBack] > open[obBarsBack]) or (isBullOB and close[obBarsBack] < open[obBarsBack])
+            float dirBias  = dirMatch ? 1.2 : 0.8
+            // Geometric mean of 3 components → 0.0–3.0+ range, capped at 3.0
+            vciScore := math.min(3.0, math.pow(math.max(volRatio, 0.1) * math.max(bodyRatio, 0.1) * dirBias, 1.0 / 3.0))
+    [isBearOB, isBullOB, obPrice, obBar, obZoneHigh, obZoneLow, dispScore, vciScore]
+
+// ── §5f Main ZigZag orchestrator — separate call sites per layer ──────────────
+// Returns [isBearOB, isBullOB, obPrice, obBar, obZoneHigh, obZoneLow, displacement, vci] from swing detection.
+method runZigZag(ZZLayer layer, int length, float atrVal, float volAvg) =>
+    [swDir, pivotHigh, pivotLow] = f_calcSwingPivots(length)
+    bool  dirFlipped  = ta.change(swDir) != 0
+    bool  isBearOB    = false
+    bool  isBullOB    = false
+    float obPrice     = na
+    int   obBar       = na
+    float obZoneHigh  = na
+    float obZoneLow   = na
+    float dispScore   = 0.0
+    float vciScore    = 0.0
+    [bearOB, bullOB, price, originBar, zHigh, zLow, disp, vci] = layer.processSwing(swDir, dirFlipped, pivotHigh, pivotLow, atrVal, volAvg)
+    isBearOB   := bearOB
+    isBullOB   := bullOB
+    obPrice    := price
+    obBar      := originBar
+    obZoneHigh := zHigh
+    obZoneLow  := zLow
+    dispScore  := disp
+    vciScore   := vci
+    [isBearOB, isBullOB, obPrice, obBar, obZoneHigh, obZoneLow, dispScore, vciScore]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §6 — UNIFIED LEVEL SYSTEM
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── §6a Store a new OB level in the unified pool ─────────────────────────────
+// Price and bar are derived from the ZZ swing (passed in by caller).
+// sweep: 1 if this OB was formed after a fresh liquidity sweep, 0 otherwise.
+method storeLevel(LevelPool pool, int layerNum, bool isBearOB, bool isBullOB, float price, int originBar, float zoneHigh, float zoneLow, float displacement, int killzone, float vci, int sweep) =>
+    if isBearOB or isBullOB
+        int originType = isBearOB ? 1 : -1
+        pool.prices.push(price)
+        pool.zoneHighs.push(zoneHigh)
+        pool.zoneLows.push(zoneLow)
+        pool.bars.push(originBar)
+        pool.layerNums.push(layerNum)
+        pool.originTypes.push(originType)
+        pool.states.push(0)
+        pool.displacements.push(displacement)
+        pool.killzones.push(killzone)
+        pool.vcis.push(vci)
+        pool.breakers.push(0)
+        pool.sweeps.push(sweep)
+        if pool.prices.size() > MAX_LEVELS
+            pool.prices.shift()
+            pool.zoneHighs.shift()
+            pool.zoneLows.shift()
+            pool.bars.shift()
+            pool.layerNums.shift()
+            pool.originTypes.shift()
+            pool.states.shift()
+            pool.displacements.shift()
+            pool.killzones.shift()
+            pool.vcis.shift()
+            pool.breakers.shift()
+            pool.sweeps.shift()
+
+// ── §6b Count distinct ZZ layers with a level near a given price ─────────────
+// Only ZZ layers (1–4) count toward confluence.
+// Multiple detections from the same layer at the same price are deduplicated.
+method calcConfluence(LevelPool pool, float price, float atrVal) =>
+    int   conf    = 0
+    float thresh  = atrVal * confATRMult
+    bool  seen1   = false
+    bool  seen2   = false
+    bool  seen3   = false
+    bool  seen4   = false
+    if pool.prices.size() > 0
+        for i = 0 to pool.prices.size() - 1
+            if math.abs(pool.prices.get(i) - price) <= thresh
+                int layerNum = pool.layerNums.get(i)
+                if layerNum == 1 and not seen1
+                    seen1 := true
+                    conf += 1
+                if layerNum == 2 and not seen2
+                    seen2 := true
+                    conf += 1
+                if layerNum == 3 and not seen3
+                    seen3 := true
+                    conf += 1
+                if layerNum == 4 and not seen4
+                    seen4 := true
+                    conf += 1
+    conf
+
+// ── §6b.1 Retrieve displacement + killzone + VCI + sweep metadata for a pool level ──
+// Used by Target mode to enrich f_zoneScore for closest support/resistance.
+method findPoolMetadata(LevelPool pool, float price, float atrVal) =>
+    float thresh = atrVal * confATRMult
+    float disp   = 0.0
+    int   kz     = -1
+    float vci    = 0.0
+    int   swp    = 0
+    if pool.prices.size() > 0
+        for i = 0 to pool.prices.size() - 1
+            if math.abs(pool.prices.get(i) - price) <= thresh
+                disp := pool.displacements.get(i)
+                kz   := pool.killzones.get(i)
+                vci  := pool.vcis.get(i)
+                swp  := pool.sweeps.get(i)
+                break
+    [disp, kz, vci, swp]
+
+// ── §6b.2 Build prefix string listing all contributing ZZ layers ─────────────
+// Returns e.g. "L1·L4" when layers 1 and 4 have levels near the price.
+// Multiple detections from the same layer at the same price are deduplicated.
+// ★ is appended when 3+ distinct ZZ layers agree.
+method confluencePrefix(LevelPool pool, float price, float atrVal) =>
+    float thresh = atrVal * confATRMult
+    bool  seen1  = false
+    bool  seen2  = false
+    bool  seen3  = false
+    bool  seen4  = false
+    string pfx   = ''
+    int   count  = 0
+    if pool.prices.size() > 0
+        for i = 0 to pool.prices.size() - 1
+            if math.abs(pool.prices.get(i) - price) <= thresh
+                int ln = pool.layerNums.get(i)
+                if ln == 1 and not seen1
+                    seen1 := true
+                    pfx += (pfx != '' ? '·' : '') + 'L1'
+                    count += 1
+                if ln == 2 and not seen2
+                    seen2 := true
+                    pfx += (pfx != '' ? '·' : '') + 'L2'
+                    count += 1
+                if ln == 3 and not seen3
+                    seen3 := true
+                    pfx += (pfx != '' ? '·' : '') + 'L3'
+                    count += 1
+                if ln == 4 and not seen4
+                    seen4 := true
+                    pfx += (pfx != '' ? '·' : '') + 'L4'
+                    count += 1
+    if count >= 3
+        pfx += '★'
+    pfx
+
+// ── §6c Find closest level above current price (resistance role) ─────────────
+method findClosestResistance(LevelPool pool) =>
+    float bestPrice    = na
+    int   bestBar      = na
+    float bestZoneHigh = na
+    float bestZoneLow  = na
+    int   bestState    = 0
+    int   bestBreaker  = 0
+    if pool.prices.size() > 0
+        for i = 0 to pool.prices.size() - 1
+            float lvlPrice = pool.prices.get(i)
+            if lvlPrice > close
+                if na(bestPrice) or lvlPrice < bestPrice
+                    bestPrice    := lvlPrice
+                    bestBar      := pool.bars.get(i)
+                    bestZoneHigh := pool.zoneHighs.get(i)
+                    bestZoneLow  := pool.zoneLows.get(i)
+                    bestState    := pool.states.get(i)
+                    bestBreaker  := pool.breakers.get(i)
+    [bestPrice, bestBar, bestZoneHigh, bestZoneLow, bestState, bestBreaker]
+
+// ── §6d Find closest level below current price (support role) ────────────────
+method findClosestSupport(LevelPool pool) =>
+    float bestPrice    = na
+    int   bestBar      = na
+    float bestZoneHigh = na
+    float bestZoneLow  = na
+    int   bestState    = 0
+    int   bestBreaker  = 0
+    if pool.prices.size() > 0
+        for i = 0 to pool.prices.size() - 1
+            float lvlPrice = pool.prices.get(i)
+            if lvlPrice < close
+                if na(bestPrice) or lvlPrice > bestPrice
+                    bestPrice    := lvlPrice
+                    bestBar      := pool.bars.get(i)
+                    bestZoneHigh := pool.zoneHighs.get(i)
+                    bestZoneLow  := pool.zoneLows.get(i)
+                    bestState    := pool.states.get(i)
+                    bestBreaker  := pool.breakers.get(i)
+    [bestPrice, bestBar, bestZoneHigh, bestZoneLow, bestState, bestBreaker]
+
+// ── §6e Update Target mode: one target + one invalidation zone ───────────────
+method updateTargetMode(LevelPool pool, int bias, float atrVal, float atrRatio, int ipda20, int ipda40, int ipda60) =>
+    if showLevels
+        // Resolve target and invalidation based on structural bias
+        float tgtPrice    = na
+        int   tgtBar      = na
+        float tgtZoneHigh = na
+        float tgtZoneLow  = na
+        int   tgtState    = 0
+        int   tgtBrk     = 0
+        float invPrice    = na
+        int   invBar      = na
+        float invZoneHigh = na
+        float invZoneLow  = na
+        int   invState    = 0
+        int   invBrk     = 0
+        if bias <= 0
+            [supPrice, supBar, supZH, supZL, supState, supBrk] = pool.findClosestSupport()
+            tgtPrice    := supPrice
+            tgtBar      := supBar
+            tgtZoneHigh := supZH
+            tgtZoneLow  := supZL
+            tgtState    := supState
+            tgtBrk      := supBrk
+            [resPrice, resBar, resZH, resZL, resState, resBrk] = pool.findClosestResistance()
+            invPrice    := resPrice
+            invBar      := resBar
+            invZoneHigh := resZH
+            invZoneLow  := resZL
+            invState    := resState
+            invBrk      := resBrk
+        else
+            [resPrice, resBar, resZH, resZL, resState, resBrk] = pool.findClosestResistance()
+            tgtPrice    := resPrice
+            tgtBar      := resBar
+            tgtZoneHigh := resZH
+            tgtZoneLow  := resZL
+            tgtState    := resState
+            tgtBrk      := resBrk
+            [supPrice, supBar, supZH, supZL, supState, supBrk] = pool.findClosestSupport()
+            invPrice    := supPrice
+            invBar      := supBar
+            invZoneHigh := supZH
+            invZoneLow  := supZL
+            invState    := supState
+            invBrk      := supBrk
+        // Target edge at near edge (first price contact entering the zone).
+        // Invalidation edge at far edge (price must exit the zone entirely to void the setup).
+        // Bearish: both use zoneHigh. Bullish: both use zoneLow.
+        // Consistent with updateZoneStates break logic (close > zoneHigh / close < zoneLow).
+        float tgtEdgeY      = bias <= 0 ? nz(tgtZoneHigh, tgtPrice) : nz(tgtZoneLow, tgtPrice)
+        float invEdgeY      = bias <= 0 ? nz(invZoneHigh, invPrice) : nz(invZoneLow, invPrice)
+        int   targetConf   = not na(tgtPrice) ? pool.calcConfluence(tgtPrice, atrVal) : 0
+        color targetCol    = bias <= 0 ? supportCol : resistanceCol
+        float tgtDisp = 0.0
+        int   tgtKZ   = -1
+        float tgtVci  = 0.0
+        int   tSwp    = 0
+        if not na(tgtPrice)
+            [td, tk, tv, tSwpM] = pool.findPoolMetadata(tgtPrice, atrVal)
+            tgtDisp := td
+            tgtKZ   := tk
+            tgtVci  := tv
+            tSwp    := tSwpM
+        // IPDA alignment for target and invalidation zones
+        int   tgtOrigin = bias <= 0 ? -1 : 1
+        int   invOrigin = bias <= 0 ? 1 : -1
+        float tgtIpda   = f_ipdaAlignment(tgtOrigin, ipda20, ipda40, ipda60)
+        float invIpda   = f_ipdaAlignment(invOrigin, ipda20, ipda40, ipda60)
+        float tgtFos = 0.0
+        if not na(tgtZoneHigh) and not na(tgtZoneLow)
+            [_tFos, _tBpr] = f_fvgOverlap(nz(tgtZoneHigh, tgtPrice), nz(tgtZoneLow, tgtPrice), atrVal)
+            tgtFos := _tFos
+        float  tgtScore    = not na(tgtPrice) ? f_zoneScore(targetConf, tgtState, tgtPrice, atrVal, nz(tgtBar, bar_index), tgtDisp, tgtKZ, atrRatio, tgtIpda, tgtVci, tgtFos, tgtBrk, tSwp) : 0.0
+        float  tgtTransp   = f_zoneTransp(tgtScore)
+        // Box border carries state: breaker = dashed, tested = dotted, fresh = user style
+        string tgtBoxStyle  = tgtBrk == 1 ? line.style_dashed : (tgtState == 0 ? f_lineStyle(levelStyle) : line.style_dotted)
+        bool  hasTgtPrice = not na(tgtPrice)
+        if hasTgtPrice
+            pool.targetEdge := tgtEdgeY
+            bool isNewTarget = na(pool.targetBox)
+            if isNewTarget
+                pool.targetBox  := box.new(f_clampBar(nz(tgtBar, bar_index)), nz(tgtZoneHigh, tgtPrice), bar_index, nz(tgtZoneLow, tgtPrice), border_color = color.new(targetCol, 40), bgcolor = color.new(targetCol, tgtTransp), border_width = 1, border_style = tgtBoxStyle)
+            if not isNewTarget
+                pool.targetBox.set_top(nz(tgtZoneHigh, tgtPrice))
+                pool.targetBox.set_bottom(nz(tgtZoneLow, tgtPrice))
+                pool.targetBox.set_left(f_clampBar(nz(tgtBar, bar_index)))
+                pool.targetBox.set_right(bar_index)
+                pool.targetBox.set_bgcolor(color.new(targetCol, tgtTransp))
+                pool.targetBox.set_border_color(color.new(targetCol, 40))
+                pool.targetBox.set_border_style(tgtBoxStyle)
+        if not hasTgtPrice
+            pool.targetEdge := na
+            if not na(pool.targetBox)
+                pool.targetBox.delete()
+                pool.targetBox := na
+        // Invalidation box — score-based gradient, border carries state
+        int   invalidConf   = not na(invPrice) ? pool.calcConfluence(invPrice, atrVal) : 0
+        color invalidCol    = bias <= 0 ? resistanceCol : supportCol
+        float invDisp = 0.0
+        int   invKZ   = -1
+        float invVci  = 0.0
+        int   iSwp    = 0
+        if not na(invPrice)
+            [id, ik, iv, iSwpM] = pool.findPoolMetadata(invPrice, atrVal)
+            invDisp := id
+            invKZ   := ik
+            invVci  := iv
+            iSwp    := iSwpM
+        float invFos = 0.0
+        if not na(invZoneHigh) and not na(invZoneLow)
+            [_iFos, _iBpr] = f_fvgOverlap(nz(invZoneHigh, invPrice), nz(invZoneLow, invPrice), atrVal)
+            invFos := _iFos
+        float invScore      = not na(invPrice) ? f_zoneScore(invalidConf, invState, invPrice, atrVal, nz(invBar, bar_index), invDisp, invKZ, atrRatio, invIpda, invVci, invFos, invBrk, iSwp) : 0.0
+        float invTransp     = f_zoneTransp(invScore)
+        string invBoxStyle   = invBrk == 1 ? line.style_dashed : (invState == 0 ? f_lineStyle(levelStyle) : line.style_dotted)
+        bool  hasInvPrice  = not na(invPrice)
+        if hasInvPrice
+            pool.invalidEdge := invEdgeY
+            bool isNewInvalid = na(pool.invalidBox)
+            if isNewInvalid
+                pool.invalidBox  := box.new(f_clampBar(nz(invBar, bar_index)), nz(invZoneHigh, invPrice), bar_index, nz(invZoneLow, invPrice), border_color = color.new(invalidCol, 40), bgcolor = color.new(invalidCol, invTransp), border_width = 1, border_style = invBoxStyle)
+            if not isNewInvalid
+                pool.invalidBox.set_top(nz(invZoneHigh, invPrice))
+                pool.invalidBox.set_bottom(nz(invZoneLow, invPrice))
+                pool.invalidBox.set_left(f_clampBar(nz(invBar, bar_index)))
+                pool.invalidBox.set_right(bar_index)
+                pool.invalidBox.set_bgcolor(color.new(invalidCol, invTransp))
+                pool.invalidBox.set_border_color(color.new(invalidCol, 40))
+                pool.invalidBox.set_border_style(invBoxStyle)
+        if not hasInvPrice
+            pool.invalidEdge := na
+            if not na(pool.invalidBox)
+                pool.invalidBox.delete()
+                pool.invalidBox := na
+
+// ── §6f Update zone states: fresh → tested → broken ──────────────────────────
+// Bear OB (resistance): tested if wick enters zone, broken if close above zone.
+// Bull OB (support): tested if wick enters zone, broken if close below zone.
+// Broken regular OB → flips to Breaker (role reversal: resistance ↔ support).
+// Broken Breaker → purged from pool entirely (no double-flip).
+// Returns [bullFlip, bearFlip]: true if a Breaker was formed in that direction this bar.
+method updateZoneStates(LevelPool pool) =>
+    bool bullFlip = false
+    bool bearFlip = false
+    int total = pool.prices.size()
+    if total > 0
+        int idx = total - 1
+        for _k = 0 to total - 1
+            if idx < 0
+                break
+            int   state   = pool.states.get(idx)
+            int   origin  = pool.originTypes.get(idx)
+            float zHigh   = pool.zoneHighs.get(idx)
+            float zLow    = pool.zoneLows.get(idx)
+            bool  isBroken = false
+            if state < 2
+                if origin == 1
+                    if close > zHigh
+                        pool.states.set(idx, 2)
+                        isBroken := true
+                    else
+                        if high >= zLow and state == 0
+                            pool.states.set(idx, 1)
+                if origin == -1
+                    if close < zLow
+                        pool.states.set(idx, 2)
+                        isBroken := true
+                    else
+                        if low <= zHigh and state == 0
+                            pool.states.set(idx, 1)
+            if isBroken
+                if pool.breakers.get(idx) == 0 and showBreakers
+                    // Regular OB broken → flip to Breaker
+                    pool.originTypes.set(idx, origin * -1)
+                    pool.states.set(idx, 0)
+                    pool.breakers.set(idx, 1)
+                    if origin == 1
+                        bullFlip := true
+                    if origin == -1
+                        bearFlip := true
+                else
+                    // Breaker broken OR breakers disabled → purge
+                    pool.prices.remove(idx)
+                    pool.zoneHighs.remove(idx)
+                    pool.zoneLows.remove(idx)
+                    pool.bars.remove(idx)
+                    pool.layerNums.remove(idx)
+                    pool.originTypes.remove(idx)
+                    pool.states.remove(idx)
+                    pool.displacements.remove(idx)
+                    pool.killzones.remove(idx)
+                    pool.vcis.remove(idx)
+                    pool.breakers.remove(idx)
+                    pool.sweeps.remove(idx)
+            idx -= 1
+    [bullFlip, bearFlip]
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §7 — MAIN EXECUTION & RENDERING
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── §7a Initialize ZigZag Layers ────────────────────────────────────────────
+var ZZLayer L1 = ZZLayer.new(length=zzLength1, show=showZZ1, bearColor=zzBearCol1, bullColor=zzBullCol1, rangeColor=zzRangeCol1, segments=array.new<line>(0), pivotLabels=array.new<label>(0))
+var ZZLayer L2 = ZZLayer.new(length=zzLength2, show=showZZ2, bearColor=zzBearCol2, bullColor=zzBullCol2, rangeColor=zzRangeCol2, segments=array.new<line>(0), pivotLabels=array.new<label>(0))
+var ZZLayer L3 = ZZLayer.new(length=zzLength3, show=showZZ3, bearColor=zzBearCol3, bullColor=zzBullCol3, rangeColor=zzRangeCol3, segments=array.new<line>(0), pivotLabels=array.new<label>(0))
+var ZZLayer L4 = ZZLayer.new(length=zzLength4, show=showZZ4, bearColor=zzBearCol4, bullColor=zzBullCol4, rangeColor=zzRangeCol4, segments=array.new<line>(0), pivotLabels=array.new<label>(0))
+
+// ── §7b Initialize Unified Level Pool ───────────────────────────────────────
+var LevelPool pool = LevelPool.new(prices=array.new<float>(0), zoneHighs=array.new<float>(0), zoneLows=array.new<float>(0), bars=array.new<int>(0), layerNums=array.new<int>(0), originTypes=array.new<int>(0), states=array.new<int>(0), displacements=array.new<float>(0), killzones=array.new<int>(0), vcis=array.new<float>(0), breakers=array.new<int>(0), sweeps=array.new<int>(0))
+var array<label> obLabels    = array.new<label>(0)
+var table        targetTable = na
+
+// ── Liquidity pool tracking (equal highs / equal lows) ──────────────────────
+// Built from ZZ pivots across all active layers. Pools with 2+ touches = EQH/EQL.
+var array<float> liqPrices  = array.new<float>(0)
+var array<int>   liqTypes   = array.new<int>(0)
+var array<int>   liqBars    = array.new<int>(0)
+var array<int>   liqCounts  = array.new<int>(0)
+// Recent sweep state (persists across bars until lookback expires)
+var int   recentSweepBar  = na
+var int   recentSweepDir  = 0
+
+// ── §7c confirmOnClose Buffer (flat var globals for 1-bar delay) ─────────────
+var bool  prevBearOB1   = false
+var bool  prevBullOB1   = false
+var float prevOBPrice1  = na
+var int   prevOBBar1    = na
+var float prevZoneHigh1 = na
+var float prevZoneLow1  = na
+var float prevDisp1     = 0.0
+var float prevVci1      = 0.0
+var bool  prevBearOB2   = false
+var bool  prevBullOB2   = false
+var float prevOBPrice2  = na
+var int   prevOBBar2    = na
+var float prevZoneHigh2 = na
+var float prevZoneLow2  = na
+var float prevDisp2     = 0.0
+var float prevVci2      = 0.0
+var bool  prevBearOB3   = false
+var bool  prevBullOB3   = false
+var float prevOBPrice3  = na
+var int   prevOBBar3    = na
+var float prevZoneHigh3 = na
+var float prevZoneLow3  = na
+var float prevDisp3     = 0.0
+var float prevVci3      = 0.0
+var bool  prevBearOB4   = false
+var bool  prevBullOB4   = false
+var float prevOBPrice4  = na
+var int   prevOBBar4    = na
+var float prevZoneHigh4 = na
+var float prevZoneLow4  = na
+var float prevDisp4     = 0.0
+var float prevVci4      = 0.0
+
+// ── §7d Global ta.* calls (must execute unconditionally every bar) ──────────
+float atrVal  = ta.atr(14)
+float atrAvg  = ta.sma(atrVal, 200)
+float atrRatio = atrAvg > 0 ? atrVal / atrAvg : 1.0
+float volAvg  = ta.sma(volume, 20)
+
+// ── §7d.1 Auto-Scale effective lengths ─────────────────────────────────────
+int effLen1 = autoScale ? f_autoScaleLength(zzLength1) : zzLength1
+int effLen2 = autoScale ? f_autoScaleLength(zzLength2) : zzLength2
+int effLen3 = autoScale ? f_autoScaleLength(zzLength3) : zzLength3
+int effLen4 = autoScale ? f_autoScaleLength(zzLength4) : zzLength4
+L1.length := effLen1
+L2.length := effLen2
+L3.length := effLen3
+L4.length := effLen4
+
+// ── §7d.2 IPDA Data Ranges (request.security — must be at global scope) ────
+// 3 ICT dealing ranges: 20/40/60 trading days on the daily timeframe.
+// Each range defines highest high and lowest low → equilibrium = midpoint.
+[ipdaHigh20, ipdaLow20] = request.security(syminfo.tickerid, 'D', [ta.highest(high, 20), ta.lowest(low, 20)], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+[ipdaHigh40, ipdaLow40] = request.security(syminfo.tickerid, 'D', [ta.highest(high, 40), ta.lowest(low, 40)], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+[ipdaHigh60, ipdaLow60] = request.security(syminfo.tickerid, 'D', [ta.highest(high, 60), ta.lowest(low, 60)], gaps = barmerge.gaps_off, lookahead = barmerge.lookahead_off)
+float ipdaEQ20 = (ipdaHigh20 + ipdaLow20) / 2
+float ipdaEQ40 = (ipdaHigh40 + ipdaLow40) / 2
+float ipdaEQ60 = (ipdaHigh60 + ipdaLow60) / 2
+// Premium/Discount: price above EQ = premium (1), below = discount (-1)
+int ipdaPD20 = close > ipdaEQ20 ? 1 : close < ipdaEQ20 ? -1 : 0
+int ipdaPD40 = close > ipdaEQ40 ? 1 : close < ipdaEQ40 ? -1 : 0
+int ipdaPD60 = close > ipdaEQ60 ? 1 : close < ipdaEQ60 ? -1 : 0
+
+// ── §7d.3 FVG Tracking (Fair Value Gap detection — runs every bar) ─────────
+// Detects new FVGs and purges mitigated ones. Arrays + f_fvgOverlap defined in §4.
+// Detect new FVGs (3-candle imbalance pattern)
+bool bullFVG = low > high[2] and close[1] > high[2]
+bool bearFVG = high < low[2] and close[1] < low[2]
+if bullFVG
+    fvgTops.push(low)
+    fvgBots.push(high[2])
+    fvgBars.push(bar_index)
+    fvgDirs.push(1)
+if bearFVG
+    fvgTops.push(low[2])
+    fvgBots.push(high)
+    fvgBars.push(bar_index)
+    fvgDirs.push(-1)
+// Purge mitigated FVGs (price has closed through the gap)
+if fvgTops.size() > 0
+    int fIdx = fvgTops.size() - 1
+    for _f = 0 to fvgTops.size() - 1
+        if fIdx < 0
+            break
+        bool mitigated = false
+        if fvgDirs.get(fIdx) == 1 and close < fvgBots.get(fIdx)
+            mitigated := true
+        if fvgDirs.get(fIdx) == -1 and close > fvgTops.get(fIdx)
+            mitigated := true
+        // Also purge stale FVGs (> 100 bars old)
+        if bar_index - fvgBars.get(fIdx) > 100
+            mitigated := true
+        if mitigated
+            fvgTops.remove(fIdx)
+            fvgBots.remove(fIdx)
+            fvgBars.remove(fIdx)
+            fvgDirs.remove(fIdx)
+        fIdx -= 1
+
+// ── §7d.4 Liquidity Pool Tracking (equal highs / equal lows) ───────────────
+// Detect ZZ pivot highs and lows across all active layers. When multiple pivots
+// cluster at the same price (within confATRMult × ATR), the level becomes an
+// equal high or equal low — a liquidity pool where stops accumulate.
+// Multi-layer clustering is our edge: ZZ1 + ZZ2 touching the same price = 2-touch pool.
+float liqThresh = atrVal * confATRMult
+// Detect raw pivots from each active layer (ta.pivothigh/ta.pivotlow)
+// These fire at the pivot bar itself (lookback bars ago).
+if showZZ1
+    float ph1 = ta.pivothigh(high, effLen1, effLen1)
+    float pl1 = ta.pivotlow(low, effLen1, effLen1)
+    if not na(ph1)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == 1 and math.abs(liqPrices.get(i) - ph1) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(ph1)
+            liqTypes.push(1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+    if not na(pl1)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == -1 and math.abs(liqPrices.get(i) - pl1) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(pl1)
+            liqTypes.push(-1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+if showZZ2
+    float ph2 = ta.pivothigh(high, effLen2, effLen2)
+    float pl2 = ta.pivotlow(low, effLen2, effLen2)
+    if not na(ph2)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == 1 and math.abs(liqPrices.get(i) - ph2) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(ph2)
+            liqTypes.push(1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+    if not na(pl2)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == -1 and math.abs(liqPrices.get(i) - pl2) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(pl2)
+            liqTypes.push(-1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+if showZZ3
+    float ph3 = ta.pivothigh(high, effLen3, effLen3)
+    float pl3 = ta.pivotlow(low, effLen3, effLen3)
+    if not na(ph3)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == 1 and math.abs(liqPrices.get(i) - ph3) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(ph3)
+            liqTypes.push(1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+    if not na(pl3)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == -1 and math.abs(liqPrices.get(i) - pl3) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(pl3)
+            liqTypes.push(-1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+if showZZ4
+    float ph4 = ta.pivothigh(high, effLen4, effLen4)
+    float pl4 = ta.pivotlow(low, effLen4, effLen4)
+    if not na(ph4)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == 1 and math.abs(liqPrices.get(i) - ph4) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(ph4)
+            liqTypes.push(1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+    if not na(pl4)
+        bool matched = false
+        if liqPrices.size() > 0
+            for i = 0 to liqPrices.size() - 1
+                if liqTypes.get(i) == -1 and math.abs(liqPrices.get(i) - pl4) <= liqThresh
+                    liqCounts.set(i, liqCounts.get(i) + 1)
+                    liqBars.set(i, bar_index)
+                    matched := true
+                    break
+        if not matched
+            liqPrices.push(pl4)
+            liqTypes.push(-1)
+            liqBars.push(bar_index)
+            liqCounts.push(1)
+// Cap liq pool size
+while liqPrices.size() > MAX_LIQ
+    liqPrices.shift()
+    liqTypes.shift()
+    liqBars.shift()
+    liqCounts.shift()
+
+// ── §7d.5 Sweep Detection — AMD-Filtered (scan liq levels each bar) ────────
+// A sweep occurs when price wicks past a liquidity pool (2+ touches) and
+// closes back inside — the signature wick-and-snap of a Judas Swing.
+// AMD filter: only sweeps during killzones or macro windows count as
+// institutional manipulation. Off-session sweeps are noise — ignored.
+// ICT cycle: Accumulation (Asia) → Manipulation (London/NY sweep) → Distribution (OB reversal).
+bool sweepDetected = false
+int  sweepTier     = f_kzTier(f_sessionNow())
+if liqPrices.size() > 0 and sweepTier >= 1
+    int sIdx = liqPrices.size() - 1
+    for _s = 0 to liqPrices.size() - 1
+        if sIdx < 0
+            break
+        float lp = liqPrices.get(sIdx)
+        int   lt = liqTypes.get(sIdx)
+        int   lc = liqCounts.get(sIdx)
+        if lc >= 2
+            // EQH swept: wick above, close below
+            bool eqhSwept = lt == 1 and high > lp and close < lp
+            // EQL swept: wick below, close above
+            bool eqlSwept = lt == -1 and low < lp and close > lp
+            if eqhSwept or eqlSwept
+                recentSweepBar := bar_index
+                recentSweepDir := lt
+                sweepDetected  := true
+                // Purge swept level (liquidity taken = gone)
+                liqPrices.remove(sIdx)
+                liqTypes.remove(sIdx)
+                liqBars.remove(sIdx)
+                liqCounts.remove(sIdx)
+        sIdx -= 1
+
+// ── §7e Run ZigZag + OB Detection (separate call sites) ─────────────────────
+// Each runZigZag call returns OB signals from ZZ direction flips.
+[rawBear1, rawBull1, rawPrice1, rawBar1, rawZoneHigh1, rawZoneLow1, rawDisp1, rawVci1] = L1.runZigZag(effLen1, atrVal, volAvg)
+[rawBear2, rawBull2, rawPrice2, rawBar2, rawZoneHigh2, rawZoneLow2, rawDisp2, rawVci2] = L2.runZigZag(effLen2, atrVal, volAvg)
+[rawBear3, rawBull3, rawPrice3, rawBar3, rawZoneHigh3, rawZoneLow3, rawDisp3, rawVci3] = L3.runZigZag(effLen3, atrVal, volAvg)
+[rawBear4, rawBull4, rawPrice4, rawBar4, rawZoneHigh4, rawZoneLow4, rawDisp4, rawVci4] = L4.runZigZag(effLen4, atrVal, volAvg)
+
+// ── §7e.1 Pivot Label Dedup — highest layer wins ────────────────────────
+// When multiple layers detect a pivot at the same bar, only the highest
+// layer's label is kept. Lower layers' labels are hidden to prevent overlap.
+if showPivotType or showPivotRatio
+    int px1 = showZZ1 and L1.pivotLabels.size() > 0 and not na(L1.pivotLabels.get(0)) ? L1.pivotLabels.get(0).get_x() : na
+    int px2 = showZZ2 and L2.pivotLabels.size() > 0 and not na(L2.pivotLabels.get(0)) ? L2.pivotLabels.get(0).get_x() : na
+    int px3 = showZZ3 and L3.pivotLabels.size() > 0 and not na(L3.pivotLabels.get(0)) ? L3.pivotLabels.get(0).get_x() : na
+    int px4 = showZZ4 and L4.pivotLabels.size() > 0 and not na(L4.pivotLabels.get(0)) ? L4.pivotLabels.get(0).get_x() : na
+    // L1 loses to L2, L3, or L4
+    if not na(px1) and ((not na(px2) and px1 == px2) or (not na(px3) and px1 == px3) or (not na(px4) and px1 == px4))
+        L1.pivotLabels.get(0).delete()
+    // L2 loses to L3 or L4
+    if not na(px2) and ((not na(px3) and px2 == px3) or (not na(px4) and px2 == px4))
+        L2.pivotLabels.get(0).delete()
+    // L3 loses to L4
+    if not na(px3) and not na(px4) and px3 == px4
+        L3.pivotLabels.get(0).delete()
+
+// ── §7f Apply confirmOnClose Buffer + Store Levels ──────────────────────────
+// When confirmOnClose is enabled, OB signals are delayed by 1 bar for confirmation.
+bool  isBear1  = confirmOnClose ? prevBearOB1  : rawBear1
+bool  isBull1  = confirmOnClose ? prevBullOB1  : rawBull1
+float obPrice1 = confirmOnClose ? prevOBPrice1 : rawPrice1
+int   obBar1   = confirmOnClose ? prevOBBar1   : rawBar1
+float zoneHi1 = confirmOnClose ? prevZoneHigh1 : rawZoneHigh1
+float zoneLo1 = confirmOnClose ? prevZoneLow1  : rawZoneLow1
+float disp1   = confirmOnClose ? prevDisp1     : rawDisp1
+float vci1    = confirmOnClose ? prevVci1      : rawVci1
+prevBearOB1  := rawBear1
+prevBullOB1  := rawBull1
+prevOBPrice1 := rawPrice1
+prevOBBar1   := rawBar1
+prevZoneHigh1 := rawZoneHigh1
+prevZoneLow1  := rawZoneLow1
+prevDisp1     := rawDisp1
+prevVci1      := rawVci1
+int kz1 = 0
+int swFlag1 = 0
+if showZZ1 and (isBear1 or isBull1)
+    int obBB1 = bar_index - nz(obBar1, bar_index)
+    kz1   := obBB1 >= 0 and obBB1 < 1000 ? f_killzoneScore(obBB1) : 0
+    swFlag1 := not na(recentSweepBar) and bar_index - recentSweepBar <= sweepLookback and ((isBear1 and recentSweepDir == 1) or (isBull1 and recentSweepDir == -1)) ? 1 : 0
+    pool.storeLevel(1, isBear1, isBull1, obPrice1, nz(obBar1, bar_index), nz(zoneHi1, obPrice1), nz(zoneLo1, obPrice1), disp1, kz1, vci1, swFlag1)
+
+bool  isBear2  = confirmOnClose ? prevBearOB2  : rawBear2
+bool  isBull2  = confirmOnClose ? prevBullOB2  : rawBull2
+float obPrice2 = confirmOnClose ? prevOBPrice2 : rawPrice2
+int   obBar2   = confirmOnClose ? prevOBBar2   : rawBar2
+float zoneHi2  = confirmOnClose ? prevZoneHigh2 : rawZoneHigh2
+float zoneLo2  = confirmOnClose ? prevZoneLow2  : rawZoneLow2
+float disp2    = confirmOnClose ? prevDisp2     : rawDisp2
+float vci2     = confirmOnClose ? prevVci2      : rawVci2
+prevBearOB2    := rawBear2
+prevBullOB2    := rawBull2
+prevOBPrice2   := rawPrice2
+prevOBBar2     := rawBar2
+prevZoneHigh2  := rawZoneHigh2
+prevZoneLow2   := rawZoneLow2
+prevDisp2      := rawDisp2
+prevVci2       := rawVci2
+int kz2 = 0
+int swFlag2 = 0
+if showZZ2 and (isBear2 or isBull2)
+    int obBB2 = bar_index - nz(obBar2, bar_index)
+    kz2   := obBB2 >= 0 and obBB2 < 1000 ? f_killzoneScore(obBB2) : 0
+    swFlag2 := not na(recentSweepBar) and bar_index - recentSweepBar <= sweepLookback and ((isBear2 and recentSweepDir == 1) or (isBull2 and recentSweepDir == -1)) ? 1 : 0
+    pool.storeLevel(2, isBear2, isBull2, obPrice2, nz(obBar2, bar_index), nz(zoneHi2, obPrice2), nz(zoneLo2, obPrice2), disp2, kz2, vci2, swFlag2)
+
+bool  isBear3  = confirmOnClose ? prevBearOB3  : rawBear3
+bool  isBull3  = confirmOnClose ? prevBullOB3  : rawBull3
+float obPrice3 = confirmOnClose ? prevOBPrice3 : rawPrice3
+int   obBar3   = confirmOnClose ? prevOBBar3   : rawBar3
+float zoneHi3  = confirmOnClose ? prevZoneHigh3 : rawZoneHigh3
+float zoneLo3  = confirmOnClose ? prevZoneLow3  : rawZoneLow3
+float disp3    = confirmOnClose ? prevDisp3     : rawDisp3
+float vci3     = confirmOnClose ? prevVci3      : rawVci3
+prevBearOB3    := rawBear3
+prevBullOB3    := rawBull3
+prevOBPrice3   := rawPrice3
+prevOBBar3     := rawBar3
+prevZoneHigh3  := rawZoneHigh3
+prevZoneLow3   := rawZoneLow3
+prevDisp3      := rawDisp3
+prevVci3       := rawVci3
+int kz3 = 0
+int swFlag3 = 0
+if showZZ3 and (isBear3 or isBull3)
+    int obBB3 = bar_index - nz(obBar3, bar_index)
+    kz3   := obBB3 >= 0 and obBB3 < 1000 ? f_killzoneScore(obBB3) : 0
+    swFlag3 := not na(recentSweepBar) and bar_index - recentSweepBar <= sweepLookback and ((isBear3 and recentSweepDir == 1) or (isBull3 and recentSweepDir == -1)) ? 1 : 0
+    pool.storeLevel(3, isBear3, isBull3, obPrice3, nz(obBar3, bar_index), nz(zoneHi3, obPrice3), nz(zoneLo3, obPrice3), disp3, kz3, vci3, swFlag3)
+
+bool  isBear4  = confirmOnClose ? prevBearOB4  : rawBear4
+bool  isBull4  = confirmOnClose ? prevBullOB4  : rawBull4
+float obPrice4 = confirmOnClose ? prevOBPrice4 : rawPrice4
+int   obBar4   = confirmOnClose ? prevOBBar4   : rawBar4
+float zoneHi4  = confirmOnClose ? prevZoneHigh4 : rawZoneHigh4
+float zoneLo4  = confirmOnClose ? prevZoneLow4  : rawZoneLow4
+float disp4    = confirmOnClose ? prevDisp4     : rawDisp4
+float vci4     = confirmOnClose ? prevVci4      : rawVci4
+prevBearOB4    := rawBear4
+prevBullOB4    := rawBull4
+prevOBPrice4   := rawPrice4
+prevOBBar4     := rawBar4
+prevZoneHigh4  := rawZoneHigh4
+prevZoneLow4   := rawZoneLow4
+prevDisp4      := rawDisp4
+prevVci4       := rawVci4
+int kz4 = 0
+int swFlag4 = 0
+if showZZ4 and (isBear4 or isBull4)
+    int obBB4 = bar_index - nz(obBar4, bar_index)
+    kz4   := obBB4 >= 0 and obBB4 < 1000 ? f_killzoneScore(obBB4) : 0
+    swFlag4 := not na(recentSweepBar) and bar_index - recentSweepBar <= sweepLookback and ((isBear4 and recentSweepDir == 1) or (isBull4 and recentSweepDir == -1)) ? 1 : 0
+    pool.storeLevel(4, isBear4, isBull4, obPrice4, nz(obBar4, bar_index), nz(zoneHi4, obPrice4), nz(zoneLo4, obPrice4), disp4, kz4, vci4, swFlag4)
+
+// ── §7g Update Zone States + Structural Bias + OB Zone Update ──────────────────
+// Breaker flip tracker (set by updateZoneStates if a regular OB flips to Breaker)
+[breakerBull, breakerBear] = pool.updateZoneStates()
+int structBias = f_structuralBias(L1, L2, L3, L4)
+if showLevels
+    pool.updateTargetMode(structBias, atrVal, atrRatio, ipdaPD20, ipdaPD40, ipdaPD60)
+
+// ── §7h Bar Coloring ────────────────────────────────────────────────────────
+// Sequential override: bias tint first, then Order Block detection bars use full color.
+color barCol = na
+if showBarColors
+    if structBias == 1
+        barCol := color.new(supportCol, 50)
+    if structBias == -1
+        barCol := color.new(resistanceCol, 50)
+    if (showZZ1 and isBear1) or (showZZ2 and isBear2) or (showZZ3 and isBear3) or (showZZ4 and isBear4)
+        barCol := resistanceCol
+    if (showZZ1 and isBull1) or (showZZ2 and isBull2) or (showZZ3 and isBull3) or (showZZ4 and isBull4)
+        barCol := supportCol
+barcolor(barCol)
+
+// ── §7h.1 OB Zone Cross Detection + Bias Reversal ────────────────────────────────
+// Cross detection uses the zone edge prices (near-edge for target, far-edge for
+// invalidation) so the alert fires at exactly the price the user sees.
+// Uses previous bar's reference because the edge may shift the moment close crosses.
+
+// Bias reversal: structural bias changed direction (excludes initial 0 → ±1)
+// Must be computed BEFORE cross detection so stale refs can be invalidated.
+var int prevBias = 0
+bool biasReversalBull = structBias == 1  and prevBias == -1
+bool biasReversalBear = structBias == -1 and prevBias == 1
+prevBias := structBias
+
+var float prevTargetRef  = na
+var float prevInvalidRef = na
+// On bias reversal, the old target/invalidation belong to the previous regime.
+// Reset refs to prevent a stale cross from being counted in the new regime.
+if biasReversalBull or biasReversalBear
+    prevTargetRef  := na
+    prevInvalidRef := na
+float curTargetRef   = pool.targetEdge
+float curInvalidRef  = pool.invalidEdge
+
+// Cross detection against previous bar's reference (stable — doesn't flip mid-cross)
+bool targetReached     = not na(prevTargetRef) and ((close[1] < prevTargetRef and close >= prevTargetRef) or (close[1] > prevTargetRef and close <= prevTargetRef))
+bool invalidBroken     = not na(prevInvalidRef) and ((close[1] < prevInvalidRef and close >= prevInvalidRef) or (close[1] > prevInvalidRef and close <= prevInvalidRef))
+prevTargetRef  := curTargetRef
+prevInvalidRef := curInvalidRef
+
+// Zone edge prices for bracket R:R (same references as cross detection)
+float curTargetPrice  = curTargetRef
+float curInvalidPrice = curInvalidRef
+
+// Resolution tracking (sliding window — last 20 regimes, mutually exclusive)
+// Within each regime, only the FIRST resolution counts (target OR invalidation).
+var array<int> resHistory = array.new<int>(0)
+var bool regimeResolved = false
+if biasReversalBull or biasReversalBear
+    regimeResolved := false
+bool tgtMarker = targetReached and not regimeResolved
+bool invMarker = invalidBroken and not regimeResolved and not tgtMarker
+if tgtMarker
+    resHistory.push(1)
+    regimeResolved := true
+if invMarker
+    resHistory.push(-1)
+    regimeResolved := true
+while resHistory.size() > 20
+    resHistory.shift()
+int targetsHit  = 0
+int invalidsHit = 0
+if resHistory.size() > 0
+    for i = 0 to resHistory.size() - 1
+        if resHistory.get(i) == 1
+            targetsHit += 1
+        else
+            invalidsHit += 1
+
+// ── §7h.2 IPDA Data Range Lines (rendered first — background context) ───────
+// 3 equilibrium lines (EQ 20d/40d/60d) — dotted, graded opacity.
+// Labels are handled by the centralized edge label system (§7j, family=2).
+var line  ipdaLine60 = na
+var line  ipdaLine40 = na
+var line  ipdaLine20 = na
+
+if barstate.islast and showIPDA
+    if not na(ipdaLine60)
+        ipdaLine60.delete()
+    if not na(ipdaLine40)
+        ipdaLine40.delete()
+    if not na(ipdaLine20)
+        ipdaLine20.delete()
+    int barsPerDay = math.max(1, math.round(timeframe.in_seconds('D') / math.max(timeframe.in_seconds(), 1)))
+    int ext60 = math.min(barsPerDay * 60, 500)
+    int ext40 = math.min(barsPerDay * 40, 400)
+    int ext20 = math.min(barsPerDay * 20, 300)
+    if not na(ipdaEQ60)
+        ipdaLine60 := line.new(f_clampBar(bar_index - ext60), ipdaEQ60, bar_index, ipdaEQ60, color = color.new(ipdaCol60, 30), width = 1, style = line.style_dotted)
+    if not na(ipdaEQ40)
+        ipdaLine40 := line.new(f_clampBar(bar_index - ext40), ipdaEQ40, bar_index, ipdaEQ40, color = color.new(ipdaCol40, 50), width = 1, style = line.style_dotted)
+    if not na(ipdaEQ20)
+        ipdaLine20 := line.new(f_clampBar(bar_index - ext20), ipdaEQ20, bar_index, ipdaEQ20, color = color.new(ipdaCol20, 65), width = 1, style = line.style_dotted)
+
+// ── §7h.3 OTE Zone (Optimal Trade Entry — 61.8%–78.6% Fib retracement) ─────
+// The ideal entry zone after a trend shift.
+// Drawn from the bias layer's last swing. Proximity-gated: hidden when zone
+// is beyond 15×ATR from current price to avoid auto-scale distortion.
+var box  oteBox = na
+var float oteTopG  = na
+var float oteBotG  = na
+var float oteRetPct = na
+
+if barstate.islast
+    if not na(oteBox)
+        oteBox.delete()
+        oteBox := na
+    oteTopG := na
+    oteBotG := na
+    oteRetPct := na
+    if showOTE and showLevels
+        // Select the bias layer (same cascade as f_structuralBias)
+        ZZLayer biasLayer = L1
+        if showZZ4 and L4.swingDir != 0
+            biasLayer := L4
+        else
+            if showZZ3 and L3.swingDir != 0
+                biasLayer := L3
+            else
+                if showZZ2 and L2.swingDir != 0
+                    biasLayer := L2
+        if biasLayer.segments.size() > 0
+            line lastSeg    = biasLayer.segments.get(0)
+            float segY1     = lastSeg.get_y1()
+            float segY2     = lastSeg.get_y2()
+            int   segX1     = lastSeg.get_x1()
+            float swingHigh = math.max(segY1, segY2)
+            float swingLow  = math.min(segY1, segY2)
+            float rng       = swingHigh - swingLow
+            if rng > 0
+                // OTE = 61.8%–78.6% retracement from swing end back toward start
+                // Bear bias (retrace UP): entry zone in the upper part of the swing
+                // Bull bias (retrace DOWN): entry zone in the lower part of the swing
+                float oteTop = na
+                float oteBot = na
+                if structBias <= 0
+                    oteBot := swingLow + 0.618 * rng
+                    oteTop := swingLow + 0.786 * rng
+                else
+                    oteTop := swingHigh - 0.618 * rng
+                    oteBot := swingHigh - 0.786 * rng
+                // Proximity gate: hide when OTE zone is beyond actionable range
+                bool oteNear = math.abs(oteTop - close) <= atrVal * 15 and math.abs(oteBot - close) <= atrVal * 15
+                // Bias-directional color: support for bull OTE (long entry), resistance for bear OTE (short entry)
+                color oteCol = structBias <= 0 ? resistanceCol : supportCol
+                if oteNear
+                    oteBox := box.new(f_clampBar(segX1), oteTop, bar_index, oteBot, border_color = color.new(oteCol, 50), bgcolor = color.new(oteCol, 90), border_width = 1, border_style = line.style_dotted)
+                    oteTopG := oteTop
+                    oteBotG := oteBot
+                    // Current retracement depth: how far price has retraced into the swing (%)
+                    oteRetPct := structBias <= 0 ? (close - swingLow) / rng * 100 : (swingHigh - close) / rng * 100
+
+// ── §7h.4 Bracket R:R (visual projection from price to target/invalidation) ─
+// Two dashed lines + a label showing the risk/reward ratio at the right edge.
+// Rendered after OTE so projection lines are always visible on top of filled zones.
+var line  bracketTgt = na
+var line  bracketInv = na
+var label bracketLbl = na
+
+if barstate.islast
+    // Clean previous bracket
+    if not na(bracketTgt)
+        bracketTgt.delete()
+        bracketTgt := na
+    if not na(bracketInv)
+        bracketInv.delete()
+        bracketInv := na
+    if not na(bracketLbl)
+        bracketLbl.delete()
+        bracketLbl := na
+    // Draw new bracket if both target and invalidation exist
+    if showLevels and not na(curTargetPrice) and not na(curInvalidPrice)
+        int   projBar     = bar_index + 3
+        color tgtBrkCol   = structBias <= 0 ? supportCol : resistanceCol
+        color invBrkCol   = structBias <= 0 ? resistanceCol : supportCol
+        bracketTgt := line.new(bar_index, close, projBar, curTargetPrice, color = color.new(tgtBrkCol, 40), width = 1, style = line.style_dotted)
+        bracketInv := line.new(bar_index, close, projBar, curInvalidPrice, color = color.new(invBrkCol, 40), width = 1, style = line.style_dotted)
+        // R:R label at midpoint between target and invalidation
+        float reward     = math.abs(curTargetPrice - close)
+        float risk       = math.abs(curInvalidPrice - close)
+        float rrVal      = risk > 0 ? reward / risk : 0.0
+        string rrTxt     = '1:' + str.tostring(math.round(rrVal, 1))
+        string rrInterp  = rrVal >= 3.0 ? '\nExcellent setup' : rrVal >= 2.0 ? '\nFavorable setup' : rrVal >= 1.0 ? '\nAcceptable' : '\nUnfavorable — risk exceeds reward'
+        string rrTip     = 'Reward: ' + str.tostring(math.round(reward / syminfo.mintick)) + ' ticks\nRisk: ' + str.tostring(math.round(risk / syminfo.mintick)) + ' ticks' + rrInterp
+        color  rrLblCol  = rrVal >= 2.0 ? supportCol : rrVal >= 1.0 ? color.new(COLOR_RANGE, 0) : resistanceCol
+        float  rrY       = (curTargetPrice + curInvalidPrice) / 2
+        bracketLbl := label.new(projBar, rrY, rrTxt, style = label.style_label_left, color = color.new(rrLblCol, 80), textcolor = rrLblCol, size = size.small, tooltip = rrTip)
+
+// ── §7i OB Detection Labels ─────────────────────────────────────────────────
+// Compact markers at swing bar +1 to avoid overlap with pivot labels.
+// Price is already visible on the OB zone label at the right edge.
+if showOBLabels and showZZ1 and isBear1
+    obLabels.push(label.new(nz(obBar1, bar_index) + 1, obPrice1, '▼', color = color.new(resistanceCol, 100), textcolor = resistanceCol, style = label.style_label_down, yloc = yloc.abovebar, size = size.tiny, tooltip = 'Bearish OB detected (Layer 1)' + (kz1 > 0 ? ' · ' + f_kzName(kz1) : '') + (swFlag1 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ1 and isBull1
+    obLabels.push(label.new(nz(obBar1, bar_index) + 1, obPrice1, '▲', color = color.new(supportCol, 100), textcolor = supportCol, style = label.style_label_up, yloc = yloc.belowbar, size = size.tiny, tooltip = 'Bullish OB detected (Layer 1)' + (kz1 > 0 ? ' · ' + f_kzName(kz1) : '') + (swFlag1 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ2 and isBear2
+    obLabels.push(label.new(nz(obBar2, bar_index) + 1, obPrice2, '▼', color = color.new(resistanceCol, 100), textcolor = resistanceCol, style = label.style_label_down, yloc = yloc.abovebar, size = size.tiny, tooltip = 'Bearish OB detected (Layer 2)' + (kz2 > 0 ? ' · ' + f_kzName(kz2) : '') + (swFlag2 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ2 and isBull2
+    obLabels.push(label.new(nz(obBar2, bar_index) + 1, obPrice2, '▲', color = color.new(supportCol, 100), textcolor = supportCol, style = label.style_label_up, yloc = yloc.belowbar, size = size.tiny, tooltip = 'Bullish OB detected (Layer 2)' + (kz2 > 0 ? ' · ' + f_kzName(kz2) : '') + (swFlag2 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ3 and isBear3
+    obLabels.push(label.new(nz(obBar3, bar_index) + 1, obPrice3, '▼', color = color.new(resistanceCol, 100), textcolor = resistanceCol, style = label.style_label_down, yloc = yloc.abovebar, size = size.tiny, tooltip = 'Bearish OB detected (Layer 3)' + (kz3 > 0 ? ' · ' + f_kzName(kz3) : '') + (swFlag3 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ3 and isBull3
+    obLabels.push(label.new(nz(obBar3, bar_index) + 1, obPrice3, '▲', color = color.new(supportCol, 100), textcolor = supportCol, style = label.style_label_up, yloc = yloc.belowbar, size = size.tiny, tooltip = 'Bullish OB detected (Layer 3)' + (kz3 > 0 ? ' · ' + f_kzName(kz3) : '') + (swFlag3 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ4 and isBear4
+    obLabels.push(label.new(nz(obBar4, bar_index) + 1, obPrice4, '▼', color = color.new(resistanceCol, 100), textcolor = resistanceCol, style = label.style_label_down, yloc = yloc.abovebar, size = size.tiny, tooltip = 'Bearish OB detected (Layer 4)' + (kz4 > 0 ? ' · ' + f_kzName(kz4) : '') + (swFlag4 == 1 ? ' · After liquidity sweep' : '')))
+if showOBLabels and showZZ4 and isBull4
+    obLabels.push(label.new(nz(obBar4, bar_index) + 1, obPrice4, '▲', color = color.new(supportCol, 100), textcolor = supportCol, style = label.style_label_up, yloc = yloc.belowbar, size = size.tiny, tooltip = 'Bullish OB detected (Layer 4)' + (kz4 > 0 ? ' · ' + f_kzName(kz4) : '') + (swFlag4 == 1 ? ' · After liquidity sweep' : '')))
+while obLabels.size() > MAX_OB_LABELS
+    obLabels.shift().delete()
+
+// ── §7j Centralized Right-Edge Labels (fusion system) ───────────────────────
+// Compact role-based labels. Tooltips reveal detailed metadata on hover.
+// Family separation: OB (0), OTE (1), IPDA (2) never merge across families.
+
+var array<label>  edgeLabels  = array.new<label>(0)
+
+if barstate.islast
+    // Clean previous labels
+    if edgeLabels.size() > 0
+        for i = 0 to edgeLabels.size() - 1
+            edgeLabels.get(i).delete()
+        edgeLabels.clear()
+
+    // Parallel arrays for each candidate level
+    array<float>  ePrices     = array.new<float>(0)
+    array<string> eRoles      = array.new<string>(0)
+    array<color>  eColors     = array.new<color>(0)
+    array<int>    eStates     = array.new<int>(0)
+    array<int>    eFamilies   = array.new<int>(0)
+    array<string> eLayerTags  = array.new<string>(0)
+    array<string> eDetailTips = array.new<string>(0)
+
+    // ── Collect OB zone levels (Target mode: target + invalidation) ──
+    if showLevelLbl and showLevels
+        float tgtPoolP = na
+        float invPoolP = na
+        int   tgtSt    = 0
+        int   invSt    = 0
+        int   tgtBrk   = 0
+        int   invBrk   = 0
+        int   tgtBarE  = na
+        int   invBarE  = na
+        if structBias <= 0
+            [cpSup, cpSB, cpSZH, cpSZL, cpSSt, cpSBrk] = pool.findClosestSupport()
+            tgtPoolP := cpSup
+            tgtSt    := cpSSt
+            tgtBrk   := cpSBrk
+            tgtBarE  := cpSB
+            [cpRes, cpRB, cpRZH, cpRZL, cpRSt, cpRBrk] = pool.findClosestResistance()
+            invPoolP := cpRes
+            invSt    := cpRSt
+            invBrk   := cpRBrk
+            invBarE  := cpRB
+        else
+            [cpRes, cpRB, cpRZH, cpRZL, cpRSt, cpRBrk] = pool.findClosestResistance()
+            tgtPoolP := cpRes
+            tgtSt    := cpRSt
+            tgtBrk   := cpRBrk
+            tgtBarE  := cpRB
+            [cpSup, cpSB, cpSZH, cpSZL, cpSSt, cpSBrk] = pool.findClosestSupport()
+            invPoolP := cpSup
+            invSt    := cpSSt
+            invBrk   := cpSBrk
+            invBarE  := cpSB
+        if not na(pool.targetEdge)
+            float tgtY = pool.targetEdge
+            color tCol = structBias <= 0 ? supportCol : resistanceCol
+            string tConfPfx = pool.confluencePrefix(nz(tgtPoolP, tgtY), atrVal)
+            float td2 = 0.0
+            int   tk2 = -1
+            float tv2 = 0.0
+            int   tSwp2 = 0
+            if not na(tgtPoolP)
+                [mtd, mtk, mtv, mtSwp] = pool.findPoolMetadata(tgtPoolP, atrVal)
+                td2 := mtd
+                tk2 := mtk
+                tv2 := mtv
+                tSwp2 := mtSwp
+            int   tConf  = not na(tgtPoolP) ? pool.calcConfluence(tgtPoolP, atrVal) : 0
+            int   tOrigType = structBias <= 0 ? -1 : 1
+            float tIA    = f_ipdaAlignment(tOrigType, ipdaPD20, ipdaPD40, ipdaPD60)
+            float tFos = 0.0
+            bool  tBpr = false
+            if not na(pool.targetBox)
+                [_tFos2, _tBpr2] = f_fvgOverlap(pool.targetBox.get_top(), pool.targetBox.get_bottom(), atrVal)
+                tFos := _tFos2
+                tBpr := _tBpr2
+            float tScore = not na(tgtPoolP) ? f_zoneScore(tConf, tgtSt, tgtPoolP, atrVal, nz(tgtBarE, bar_index), td2, tk2, atrRatio, tIA, tv2, tFos, tgtBrk, tSwp2) : 0.0
+            string tGrade = f_zoneGrade(tScore)
+            string tKzStr = f_kzName(tk2)
+            string tIpdaStr = tIA >= 0.99 ? '3/3 Aligned' : tIA >= 0.6 ? '2/3 Aligned' : tIA > 0.0 ? '1/3 Aligned' : '0/3 Aligned'
+            string tVolStr = tv2 > 1.5 ? str.tostring(math.round(tv2, 1)) + '× average (strong commitment)' : tv2 > 0 ? str.tostring(math.round(tv2, 1)) + '× average' : '—'
+            string tFvgStr = tBpr ? str.tostring(math.round(tFos * 100, 0)) + '% (opposing gaps)' : tFos >= 0.5 ? str.tostring(math.round(tFos * 100, 0)) + '% (strong)' : tFos > 0 ? str.tostring(math.round(tFos * 100, 0)) + '%' : '—'
+            string tDetail = tConfPfx != '' ? 'Confluence: ' + tConfPfx : '1 layer'
+            if tgtBrk == 1
+                tDetail += '\nType: Breaker (flipped Order Block)'
+            tDetail += '\nState: ' + (tgtSt == 0 ? 'Fresh' : 'Tested')
+            tDetail += '\nQuality: ' + tGrade + ' · ' + str.tostring(math.round(tScore * 100)) + '%'
+            tDetail += '\nImpulse: ' + (td2 > 0 ? str.tostring(math.round(td2, 1)) + '× avg candle' : '—')
+            tDetail += '\nVolume: ' + tVolStr
+            tDetail += '\nGap Overlap: ' + tFvgStr
+            tDetail += '\nSession: ' + tKzStr
+            tDetail += '\nRanges: ' + tIpdaStr
+            tDetail += '\nLiquidity: ' + (tSwp2 == 1 ? 'Swept before this zone formed' : '—')
+            // Expected Value (same formula as dashboard)
+            float edgeRR = not na(curTargetPrice) and not na(curInvalidPrice) ? (math.abs(curTargetPrice - close) / math.max(math.abs(curInvalidPrice - close), 1e-10)) : 0.0
+            float edgeEV = f_expectedValue(targetsHit, targetsHit + invalidsHit, edgeRR, tScore)
+            if not na(edgeEV)
+                tDetail += '\nEV: ' + (edgeEV >= 0 ? '+' : '') + str.tostring(math.round(edgeEV, 2)) + (edgeEV > 0 ? ' (positive)' : edgeEV == 0 ? ' (break-even)' : ' (negative)')
+            else
+                if targetsHit + invalidsHit < 3
+                    tDetail += '\nEV: — (need 3+ completed setups)'
+                else
+                    tDetail += '\nEV: — (no target/invalidation pair)'
+            ePrices.push(tgtY)
+            string tRoleBase = tgtBrk == 1 ? '◎ BRK' : '◎ OB'
+            eRoles.push(tConf >= 3 ? tRoleBase + '★' : tRoleBase)
+            eColors.push(tCol)
+            eStates.push(tgtSt)
+            eFamilies.push(0)
+            eLayerTags.push('')
+            eDetailTips.push(tDetail)
+        if not na(pool.invalidEdge)
+            float invY = pool.invalidEdge
+            color iCol = structBias <= 0 ? resistanceCol : supportCol
+            string iConfPfx = pool.confluencePrefix(nz(invPoolP, invY), atrVal)
+            float id2 = 0.0
+            int   ik2 = -1
+            float iv2 = 0.0
+            int   iSwp2 = 0
+            if not na(invPoolP)
+                [mid2, mik2, miv2, miSwp] = pool.findPoolMetadata(invPoolP, atrVal)
+                id2 := mid2
+                ik2 := mik2
+                iv2 := miv2
+                iSwp2 := miSwp
+            int   iConf  = not na(invPoolP) ? pool.calcConfluence(invPoolP, atrVal) : 0
+            int   iOrigType = structBias <= 0 ? 1 : -1
+            float iIA    = f_ipdaAlignment(iOrigType, ipdaPD20, ipdaPD40, ipdaPD60)
+            float iFos = 0.0
+            bool  iBpr = false
+            if not na(pool.invalidBox)
+                [_iFos2, _iBpr2] = f_fvgOverlap(pool.invalidBox.get_top(), pool.invalidBox.get_bottom(), atrVal)
+                iFos := _iFos2
+                iBpr := _iBpr2
+            float iScore = not na(invPoolP) ? f_zoneScore(iConf, invSt, invPoolP, atrVal, nz(invBarE, bar_index), id2, ik2, atrRatio, iIA, iv2, iFos, invBrk, iSwp2) : 0.0
+            string iGrade = f_zoneGrade(iScore)
+            string iKzStr = f_kzName(ik2)
+            string iIpdaStr = iIA >= 0.99 ? '3/3 Aligned' : iIA >= 0.6 ? '2/3 Aligned' : iIA > 0.0 ? '1/3 Aligned' : '0/3 Aligned'
+            string iVolStr = iv2 > 1.5 ? str.tostring(math.round(iv2, 1)) + '× average (strong commitment)' : iv2 > 0 ? str.tostring(math.round(iv2, 1)) + '× average' : '—'
+            string iFvgStr = iBpr ? str.tostring(math.round(iFos * 100, 0)) + '% (opposing gaps)' : iFos >= 0.5 ? str.tostring(math.round(iFos * 100, 0)) + '% (strong)' : iFos > 0 ? str.tostring(math.round(iFos * 100, 0)) + '%' : '—'
+            string iDetail = iConfPfx != '' ? 'Confluence: ' + iConfPfx : '1 layer'
+            if invBrk == 1
+                iDetail += '\nType: Breaker (flipped Order Block)'
+            iDetail += '\nState: ' + (invSt == 0 ? 'Fresh' : 'Tested')
+            iDetail += '\nQuality: ' + iGrade + ' · ' + str.tostring(math.round(iScore * 100)) + '%'
+            iDetail += '\nImpulse: ' + (id2 > 0 ? str.tostring(math.round(id2, 1)) + '× avg candle' : '—')
+            iDetail += '\nVolume: ' + iVolStr
+            iDetail += '\nGap Overlap: ' + iFvgStr
+            iDetail += '\nSession: ' + iKzStr
+            iDetail += '\nRanges: ' + iIpdaStr
+            iDetail += '\nLiquidity: ' + (iSwp2 == 1 ? 'Swept before this zone formed' : '—')
+            ePrices.push(invY)
+            string iRoleBase = invBrk == 1 ? '⊘ BRK' : '⊘ OB'
+            eRoles.push(iConf >= 3 ? iRoleBase + '★' : iRoleBase)
+            eColors.push(iCol)
+            eStates.push(invSt)
+            eFamilies.push(0)
+            eLayerTags.push('')
+            eDetailTips.push(iDetail)
+
+    // ── Collect OTE zone levels (family=1 — never merge with OB) ──
+    if showOTE and showLevels
+        if not na(oteTopG) and not na(oteBotG)
+            color oteEdgeCol = structBias <= 0 ? resistanceCol : supportCol
+            string oteBias = structBias <= 0 ? 'Bearish' : 'Bullish'
+            string retStr = str.tostring(math.round(nz(oteRetPct, 0), 1)) + '%'
+            string oteTipTop = '78.6% Fibonacci retracement (top of entry zone)'
+            oteTipTop += '\nPrice: ' + str.tostring(oteTopG, format.mintick)
+            oteTipTop += '\nTrend: ' + oteBias
+            oteTipTop += '\nCurrent retracement: ' + retStr
+            string oteTipBot = '61.8% Fibonacci retracement (bottom of entry zone)'
+            oteTipBot += '\nPrice: ' + str.tostring(oteBotG, format.mintick)
+            oteTipBot += '\nTrend: ' + oteBias
+            oteTipBot += '\nCurrent retracement: ' + retStr
+            ePrices.push(oteTopG)
+            eRoles.push('OTE▴')
+            eColors.push(oteEdgeCol)
+            eStates.push(-1)
+            eFamilies.push(1)
+            eLayerTags.push('')
+            eDetailTips.push(oteTipTop)
+            ePrices.push(oteBotG)
+            eRoles.push('OTE▾')
+            eColors.push(oteEdgeCol)
+            eStates.push(-1)
+            eFamilies.push(1)
+            eLayerTags.push('')
+            eDetailTips.push(oteTipBot)
+
+    // ── Collect IPDA EQ levels (family=2 — never merge with others) ──
+    if showIPDA
+        if not na(ipdaEQ60)
+            float rng60 = (ipdaHigh60 - ipdaLow60) / 2
+            float depth60 = rng60 > 0 ? math.abs(close - ipdaEQ60) / rng60 * 100 : 0.0
+            string pd60Str = ipdaPD60 == 1 ? 'Premium (' + str.tostring(math.round(depth60)) + '% above equilibrium)' : ipdaPD60 == -1 ? 'Discount (' + str.tostring(math.round(depth60)) + '% below equilibrium)' : 'At Equilibrium'
+            string tip60 = '60-Day Institutional Range'
+            tip60 += '\nHigh: ' + str.tostring(ipdaHigh60, format.mintick)
+            tip60 += '\nLow: ' + str.tostring(ipdaLow60, format.mintick)
+            tip60 += '\nEQ: ' + str.tostring(ipdaEQ60, format.mintick)
+            tip60 += '\nStatus: ' + pd60Str
+            ePrices.push(ipdaEQ60)
+            eRoles.push('EQ 60d')
+            eColors.push(ipdaCol60)
+            eStates.push(-1)
+            eFamilies.push(2)
+            eLayerTags.push('')
+            eDetailTips.push(tip60)
+        if not na(ipdaEQ40)
+            float rng40 = (ipdaHigh40 - ipdaLow40) / 2
+            float depth40 = rng40 > 0 ? math.abs(close - ipdaEQ40) / rng40 * 100 : 0.0
+            string pd40Str = ipdaPD40 == 1 ? 'Premium (' + str.tostring(math.round(depth40)) + '% above equilibrium)' : ipdaPD40 == -1 ? 'Discount (' + str.tostring(math.round(depth40)) + '% below equilibrium)' : 'At Equilibrium'
+            string tip40 = '40-Day Institutional Range'
+            tip40 += '\nHigh: ' + str.tostring(ipdaHigh40, format.mintick)
+            tip40 += '\nLow: ' + str.tostring(ipdaLow40, format.mintick)
+            tip40 += '\nEQ: ' + str.tostring(ipdaEQ40, format.mintick)
+            tip40 += '\nStatus: ' + pd40Str
+            ePrices.push(ipdaEQ40)
+            eRoles.push('EQ 40d')
+            eColors.push(ipdaCol40)
+            eStates.push(-1)
+            eFamilies.push(2)
+            eLayerTags.push('')
+            eDetailTips.push(tip40)
+        if not na(ipdaEQ20)
+            float rng20 = (ipdaHigh20 - ipdaLow20) / 2
+            float depth20 = rng20 > 0 ? math.abs(close - ipdaEQ20) / rng20 * 100 : 0.0
+            string pd20Str = ipdaPD20 == 1 ? 'Premium (' + str.tostring(math.round(depth20)) + '% above equilibrium)' : ipdaPD20 == -1 ? 'Discount (' + str.tostring(math.round(depth20)) + '% below equilibrium)' : 'At Equilibrium'
+            string tip20 = '20-Day Institutional Range'
+            tip20 += '\nHigh: ' + str.tostring(ipdaHigh20, format.mintick)
+            tip20 += '\nLow: ' + str.tostring(ipdaLow20, format.mintick)
+            tip20 += '\nEQ: ' + str.tostring(ipdaEQ20, format.mintick)
+            tip20 += '\nStatus: ' + pd20Str
+            ePrices.push(ipdaEQ20)
+            eRoles.push('EQ 20d')
+            eColors.push(ipdaCol20)
+            eStates.push(-1)
+            eFamilies.push(2)
+            eLayerTags.push('')
+            eDetailTips.push(tip20)
+
+    // ── Merge nearby levels (same family + same role + price proximity) ──
+    float mergeThresh = atrVal * confATRMult
+    int   totalEdge   = ePrices.size()
+    array<bool> used  = array.new<bool>(totalEdge, false)
+    if totalEdge > 0
+        for i = 0 to totalEdge - 1
+            if not used.get(i)
+                color  mColor  = eColors.get(i)
+                float  mPrice  = ePrices.get(i)
+                string mRole   = eRoles.get(i)
+                int    mState  = eStates.get(i)
+                int    family  = eFamilies.get(i)
+                int    mCount  = 1
+                string mDetail = eDetailTips.get(i)
+                // Collect unique layer tags for this merge group
+                array<string> grpTags = array.new<string>(0)
+                string tag0 = eLayerTags.get(i)
+                if tag0 != ''
+                    grpTags.push(tag0)
+                if i < totalEdge - 1
+                    for j = i + 1 to totalEdge - 1
+                        if not used.get(j) and eFamilies.get(j) == family and eRoles.get(j) == mRole and math.abs(ePrices.get(j) - mPrice) <= mergeThresh
+                            string jTag = eLayerTags.get(j)
+                            if jTag != ''
+                                bool isDup = false
+                                if grpTags.size() > 0
+                                    for k = 0 to grpTags.size() - 1
+                                        if grpTags.get(k) == jTag
+                                            isDup := true
+                                            break
+                                if not isDup
+                                    grpTags.push(jTag)
+                            mCount += 1
+                            if eStates.get(j) > mState
+                                mState := eStates.get(j)
+                            used.set(j, true)
+                // ★ threshold: OB ≥ 3 unique layers
+                bool hasStar = family == 0 and grpTags.size() >= 3
+                // Build visible label text
+                string lblTxt = mRole + (hasStar ? '★' : '') + ' · ' + str.tostring(mPrice, format.mintick)
+                // Build tooltip
+                string tipTxt = ''
+                if family == 0
+                    if grpTags.size() > 1
+                        string confStr = ''
+                        for m = 0 to grpTags.size() - 1
+                            confStr += (m > 0 ? ' · ' : '') + grpTags.get(m)
+                        tipTxt := 'Confluence: ' + confStr + ' (×' + str.tostring(mCount) + ')'
+                        if mDetail != ''
+                            tipTxt += '\n' + mDetail
+                    else
+                        if grpTags.size() > 0
+                            tipTxt := 'Layer: ' + grpTags.get(0)
+                        if mDetail != ''
+                            tipTxt += (tipTxt != '' ? '\n' : '') + mDetail
+                if family == 1 or family == 2
+                    tipTxt := mDetail
+                // IPDA EQ labels: tiny + graded transparency. Others: small + solid color.
+                string lblSize = family == 2 ? size.tiny : size.small
+                int    lblAlpha = family == 2 ? (mRole == 'EQ 60d' ? 30 : mRole == 'EQ 40d' ? 50 : 65) : 0
+                edgeLabels.push(label.new(bar_index, mPrice, lblTxt, style = label.style_label_left, color = color.new(mColor, 100), textcolor = color.new(mColor, lblAlpha), size = lblSize, tooltip = tipTxt))
+
+    // ── Label stacking: nudge overlapping labels vertically ──
+    // Price stays in text (always accurate). Only Y position adjusts for readability.
+    // Sort by Y descending (top → bottom), then push apart any that are too close.
+    if edgeLabels.size() > 1
+        int eCount = edgeLabels.size()
+        float stackGap = atrVal * 0.6
+        // Collect Y positions + sort indices by price descending (bubble sort)
+        array<float> yPos = array.new<float>(eCount)
+        array<int>   idx  = array.new<int>(eCount)
+        for i = 0 to eCount - 1
+            yPos.set(i, edgeLabels.get(i).get_y())
+            idx.set(i, i)
+        // Simple bubble sort by Y descending
+        for i = 0 to eCount - 2
+            for j = 0 to eCount - i - 2
+                if yPos.get(idx.get(j)) < yPos.get(idx.get(j + 1))
+                    int tmp = idx.get(j)
+                    idx.set(j, idx.get(j + 1))
+                    idx.set(j + 1, tmp)
+        // Walk sorted list top→bottom: if gap < stackGap, nudge down
+        for i = 1 to eCount - 1
+            int prevIdx = idx.get(i - 1)
+            int curIdx  = idx.get(i)
+            float prevY = edgeLabels.get(prevIdx).get_y()
+            float curY  = edgeLabels.get(curIdx).get_y()
+            if prevY - curY < stackGap
+                float newY = prevY - stackGap
+                edgeLabels.get(curIdx).set_y(newY)
+
+// ── §7k Dashboard ───────────────────────────────────────────────────────────
+
+if showTable and barstate.islast
+    float targetPrice  = na
+    int   targetBar    = na
+    float invalidPrice = na
+    int   invalidBar   = na
+    float tgtPoolP     = na
+    float invPoolP     = na
+    int   tgtState     = 0
+    int   invState     = 0
+    int   tgtBrkD      = 0
+    int   invBrkD      = 0
+    if structBias <= 0
+        [tSup, tSupBar, tSupZH, tSupZL, tSupState, tSupBrk] = pool.findClosestSupport()
+        targetPrice := nz(tSupZH, tSup)
+        tgtPoolP    := tSup
+        targetBar   := tSupBar
+        tgtState    := tSupState
+        tgtBrkD     := tSupBrk
+        [iRes, iResBar, iResZH, iResZL, iResState, iResBrk] = pool.findClosestResistance()
+        invalidPrice := nz(iResZH, iRes)
+        invPoolP     := iRes
+        invalidBar   := iResBar
+        invState     := iResState
+        invBrkD      := iResBrk
+    else
+        [tRes, tResBar, tResZH, tResZL, tResState, tResBrk] = pool.findClosestResistance()
+        targetPrice := nz(tResZL, tRes)
+        tgtPoolP    := tRes
+        targetBar   := tResBar
+        tgtState    := tResState
+        tgtBrkD     := tResBrk
+        [iSup, iSupBar, iSupZH, iSupZL, iSupState, iSupBrk] = pool.findClosestSupport()
+        invalidPrice := nz(iSupZL, iSup)
+        invPoolP     := iSup
+        invalidBar   := iSupBar
+        invState     := iSupState
+        invBrkD      := iSupBrk
+    int targetConf = not na(tgtPoolP) ? pool.calcConfluence(tgtPoolP, atrVal) : 0
+    // Compute target zone grade for dashboard tooltip
+    float  dtd = 0.0
+    int    dtk = -1
+    float  dtv = 0.0
+    int    dtSwp = 0
+    if not na(tgtPoolP)
+        [_dtd, _dtk, _dtv, _dtSwp] = pool.findPoolMetadata(tgtPoolP, atrVal)
+        dtd := _dtd
+        dtk := _dtk
+        dtv := _dtv
+        dtSwp := _dtSwp
+    int    dtOrig  = structBias <= 0 ? -1 : 1
+    float  dtIpda  = f_ipdaAlignment(dtOrig, ipdaPD20, ipdaPD40, ipdaPD60)
+    float  dtFos = 0.0
+    bool   dtBpr = false
+    if not na(pool.targetBox)
+        [_dtFos, _dtBpr] = f_fvgOverlap(pool.targetBox.get_top(), pool.targetBox.get_bottom(), atrVal)
+        dtFos := _dtFos
+        dtBpr := _dtBpr
+    float  dtScore = not na(tgtPoolP) ? f_zoneScore(targetConf, tgtState, tgtPoolP, atrVal, nz(targetBar, bar_index), dtd, dtk, atrRatio, dtIpda, dtv, dtFos, tgtBrkD, dtSwp) : 0.0
+    string dtGrade = f_zoneGrade(dtScore)
+    // Compute invalidation zone grade
+    int    invConf  = not na(invPoolP) ? pool.calcConfluence(invPoolP, atrVal) : 0
+    float  did = 0.0
+    int    dik = -1
+    float  div2 = 0.0
+    int    diSwp = 0
+    if not na(invPoolP)
+        [_did, _dik, _div, _diSwp] = pool.findPoolMetadata(invPoolP, atrVal)
+        did := _did
+        dik := _dik
+        div2 := _div
+        diSwp := _diSwp
+    int    diOrig  = structBias <= 0 ? 1 : -1
+    float  diIpda  = f_ipdaAlignment(diOrig, ipdaPD20, ipdaPD40, ipdaPD60)
+    float  diFos = 0.0
+    bool   diBpr = false
+    if not na(pool.invalidBox)
+        [_diFos, _diBpr] = f_fvgOverlap(pool.invalidBox.get_top(), pool.invalidBox.get_bottom(), atrVal)
+        diFos := _diFos
+        diBpr := _diBpr
+    float  diScore = not na(invPoolP) ? f_zoneScore(invConf, invState, invPoolP, atrVal, nz(invalidBar, bar_index), did, dik, atrRatio, diIpda, div2, diFos, invBrkD, diSwp) : 0.0
+    string diGrade = f_zoneGrade(diScore)
+
+    // Bias source + direction
+    string biasZZ  = (showZZ4 and L4.swingDir != 0 ? '4' : showZZ3 and L3.swingDir != 0 ? '3' : showZZ2 and L2.swingDir != 0 ? '2' : '1')
+    string biasStr = (structBias == -1 ? '▼ BEAR' : structBias == 1 ? '▲ BULL' : '— FLAT')
+    color  biasCol = (structBias == -1 ? resistanceCol : structBias == 1 ? supportCol : color.gray)
+
+    // Target + distance
+    color  targetCol  = structBias <= 0 ? supportCol : resistanceCol
+    string tgtStr     = not na(targetPrice) ? (tgtBrkD == 1 ? '⟐ ' : '') + str.tostring(targetPrice, format.mintick) : '—'
+    string tgtDist    = not na(targetPrice) ? str.tostring(math.abs(targetPrice - close) / syminfo.mintick, '#') + 't' : ''
+
+    // Invalidation + distance
+    color  invalidCol = structBias <= 0 ? resistanceCol : supportCol
+    string invStr     = not na(invalidPrice) ? (invBrkD == 1 ? '⟐ ' : '') + str.tostring(invalidPrice, format.mintick) : '—'
+    string invDist    = not na(invalidPrice) ? str.tostring(math.abs(invalidPrice - close) / syminfo.mintick, '#') + 't' : ''
+
+    // R:R ratio (constant 1:X — reward per unit of risk)
+    float tgtDistF = not na(targetPrice) ? math.abs(targetPrice - close) : 0.0
+    float invDistF = not na(invalidPrice) ? math.abs(invalidPrice - close) : 0.0
+    float rrRatio  = invDistF > 0 ? tgtDistF / invDistF : 0.0
+    string rrStr   = '—'
+    if invDistF > 0
+        rrStr := '1:' + str.tostring(math.round(rrRatio, 1))
+    color  rrCol   = rrRatio >= 2.0 ? supportCol : rrRatio >= 1.0 ? color.new(COLOR_RANGE, 0) : resistanceCol
+    if invDistF == 0
+        rrCol := color.gray
+
+    // Resolved trade count (used by EV computation)
+    int totalTrades = targetsHit + invalidsHit
+
+    // Per-layer bias summary (compact)
+    string zz1Dir = (L1.swingDir == 1 ? '▲' : L1.swingDir == -1 ? '▼' : '—')
+    string zz2Dir = (L2.swingDir == 1 ? '▲' : L2.swingDir == -1 ? '▼' : '—')
+    string zz3Dir = (L3.swingDir == 1 ? '▲' : L3.swingDir == -1 ? '▼' : '—')
+    string zz4Dir = (L4.swingDir == 1 ? '▲' : L4.swingDir == -1 ? '▼' : '—')
+    string layerStr = ''
+    if showZZ1
+        layerStr += '1' + zz1Dir
+    if showZZ2
+        layerStr += (layerStr != '' ? ' ' : '') + '2' + zz2Dir
+    if showZZ3
+        layerStr += (layerStr != '' ? ' ' : '') + '3' + zz3Dir
+    if showZZ4
+        layerStr += (layerStr != '' ? ' ' : '') + '4' + zz4Dir
+
+    // Build table (2 columns × 9 rows)
+    if na(targetTable)
+        targetTable := table.new(f_tablePos(), 2, 9, bgcolor = color.new(chart.bg_color, 10), border_color = color.new(chart.fg_color, 80), border_width = 1, frame_color = color.new(chart.fg_color, 60), frame_width = 1)
+
+    color  lblCol = color.new(chart.fg_color, 40)
+    color  valCol = chart.fg_color
+    string SZ     = size.small
+
+    // Row 0 — Ticker (identity)
+    targetTable.cell(0, 0, syminfo.ticker, text_color = valCol, text_size = SZ, text_halign = text.align_center)
+    targetTable.merge_cells(0, 0, 1, 0)
+
+    // Row 1 — Bias
+    string biasTip = 'Source: Layer ' + biasZZ + ' (highest active layer)'
+    biasTip += '\nDirection: ' + (structBias == 1 ? 'Bullish — price making higher structure' : structBias == -1 ? 'Bearish — price making lower structure' : 'Flat — no directional conviction')
+    targetTable.cell(0, 1, 'Bias (L' + biasZZ + ')', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 1, biasStr, text_color = biasCol, text_size = SZ, text_halign = text.align_left, tooltip = biasTip)
+
+    // Row 2 — Target
+    string tgtType = tgtBrkD == 1 ? 'Breaker' : 'Order Block'
+    string tgtTip = not na(targetPrice) ? ('Closest ' + tgtType + ' in the trend direction\nQuality: ' + dtGrade + ' · ' + str.tostring(math.round(dtScore * 100)) + '%\nConfluence: ' + str.tostring(math.max(targetConf, 1)) + (targetConf > 1 ? ' layers agree' : ' layer') + (dtBpr ? '\nOpposing gaps overlap (BPR)' : '') + (dtSwp == 1 ? '\nLiquidity swept' : '')) : 'No target zone found'
+    targetTable.cell(0, 2, 'Target', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 2, tgtStr + (tgtDist != '' ? ' (' + tgtDist + ')' : ''), text_color = targetCol, text_size = SZ, text_halign = text.align_left, tooltip = tgtTip)
+
+    // Row 3 — Invalidation
+    string invType = invBrkD == 1 ? 'Breaker' : 'Order Block'
+    string invTip = not na(invalidPrice) ? ('Closest ' + invType + ' against the trend\nQuality: ' + diGrade + ' · ' + str.tostring(math.round(diScore * 100)) + '%\nSetup is void if price closes here' + (diBpr ? '\nOpposing gaps overlap (BPR)' : '') + (diSwp == 1 ? '\nLiquidity swept' : '')) : 'No invalidation zone found'
+    targetTable.cell(0, 3, 'Invalidation', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 3, invStr + (invDist != '' ? ' (' + invDist + ')' : ''), text_color = invalidCol, text_size = SZ, text_halign = text.align_left, tooltip = invTip)
+
+    // Row 4 — R:R
+    string rrInterp = rrRatio >= 3.0 ? 'Excellent setup' : rrRatio >= 2.0 ? 'Favorable setup' : rrRatio >= 1.0 ? 'Acceptable' : 'Unfavorable — risk exceeds reward'
+    string rrTipDash = invDistF > 0 ? ('Reward: ' + str.tostring(math.round(tgtDistF / syminfo.mintick)) + ' ticks\nRisk: ' + str.tostring(math.round(invDistF / syminfo.mintick)) + ' ticks\n' + rrInterp) : 'No target/invalidation pair available'
+    targetTable.cell(0, 4, 'R:R', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 4, rrStr, text_color = rrCol, text_size = SZ, text_halign = text.align_left, tooltip = rrTipDash)
+
+    // Row 5 — Expected Value (quality-adjusted)
+    // Streak + recent pattern (always computed when trades exist)
+    string streakStr = ''
+    if totalTrades > 0
+        int streak = 0
+        int streakType = 0
+        if resHistory.size() > 0
+            streakType := resHistory.get(resHistory.size() - 1)
+            int sIdx = resHistory.size() - 1
+            for _s = 0 to resHistory.size() - 1
+                if sIdx < 0
+                    break
+                if resHistory.get(sIdx) == streakType
+                    streak += 1
+                else
+                    break
+                sIdx -= 1
+        string streakLabel = streakType == 1 ? (streak == 1 ? 'Target' : 'Targets') : (streak == 1 ? 'Invalidation' : 'Invalidations')
+        string last5 = ''
+        int startIdx = math.max(0, resHistory.size() - 5)
+        if resHistory.size() > 0
+            for i = startIdx to resHistory.size() - 1
+                last5 += (last5 != '' ? ' ' : '') + (resHistory.get(i) == 1 ? 'T' : 'I')
+        streakStr := '\nStreak: ' + str.tostring(streak) + ' ' + streakLabel + ' · Recent: ' + last5
+    // EV computation
+    float evVal = f_expectedValue(targetsHit, totalTrades, rrRatio, dtScore)
+    string evStr = '—'
+    color  evCol = color.gray
+    string evTip = ''
+    if not na(evVal)
+        evStr := (evVal >= 0 ? '+' : '') + str.tostring(math.round(evVal, 2))
+        evCol := evVal > 0.5 ? supportCol : evVal > 0 ? color.new(supportCol, 40) : evVal == 0 ? color.gray : resistanceCol
+        float baseP = targetsHit / math.max(float(totalTrades), 1.0)
+        float qualAdj = 0.5 + dtScore * 0.5
+        float adjP = math.min(baseP * qualAdj, 0.99)
+        evTip := 'How much you gain on average per unit risked'
+        evTip += '\nWin rate: ' + str.tostring(math.round(baseP * 100, 1)) + '% (' + str.tostring(targetsHit) + (targetsHit == 1 ? ' Target / ' : ' Targets / ') + str.tostring(invalidsHit) + (invalidsHit == 1 ? ' Invalidation)' : ' Invalidations)')
+        evTip += '\nZone quality factor: ' + str.tostring(math.round(qualAdj * 100)) + '% (from ' + dtGrade + ' grade)'
+        evTip += '\nEstimated win chance: ' + str.tostring(math.round(adjP * 100, 1)) + '%'
+        evTip += '\nR:R: 1:' + str.tostring(math.round(rrRatio, 1))
+        evTip += '\nEV = ' + str.tostring(math.round(adjP * 100, 1)) + '% × ' + str.tostring(math.round(rrRatio, 1)) + ' − ' + str.tostring(math.round((1.0 - adjP) * 100, 1)) + '% = ' + str.tostring(math.round(evVal, 2))
+        evTip += streakStr
+        evTip += '\n' + (evVal > 0 ? 'Positive — setup is worth taking over many repetitions' : evVal == 0 ? 'Break-even — no advantage in either direction' : 'Negative — risk outweighs expected reward')
+    else
+        if totalTrades < 3
+            evTip := 'Need at least 3 completed setups to compute EV (' + str.tostring(totalTrades) + ' so far)' + streakStr
+        else
+            evTip := 'No target/invalidation pair — cannot compute EV' + streakStr
+    targetTable.cell(0, 5, 'EV', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 5, evStr, text_color = evCol, text_size = SZ, text_halign = text.align_left, tooltip = evTip)
+
+    // Row 6 — Layer Biases
+    string layerTip = 'Per-layer swing direction\n▲ = last swing was up\n▼ = last swing was down'
+    targetTable.cell(0, 6, 'Layers', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 6, layerStr, text_color = valCol, text_size = SZ, text_halign = text.align_left, tooltip = layerTip)
+
+    // Row 7 — Session (active killzone / macro window)
+    int    nowCode  = f_sessionNow()
+    int    nowTier  = f_kzTier(nowCode)
+    string sessStr  = f_kzName(nowCode)
+    color  sessCol  = nowTier == 2 ? color.new(COLOR_RANGE, 0) : nowTier == 1 ? chart.fg_color : color.gray
+    int    nowH     = hour(time, "America/New_York")
+    int    nowM     = minute(time, "America/New_York")
+    [nextName, nextMin] = f_nextSession(nowH, nowM)
+    string sessTip  = ''
+    if nowCode > 0
+        if nowTier == 2
+            // Macro: show full window range
+            string macroHours = switch nowCode
+                20 => '02:33–03:00 NY'
+                21 => '04:03–04:30 NY'
+                22 => '08:50–09:10 NY'
+                23 => '09:50–10:10 NY'
+                24 => '10:50–11:10 NY'
+                25 => '11:50–12:10 NY'
+                => ''
+            sessTip := 'Macro window · ' + macroHours
+        else
+            // Killzone or Asia: add full hours range
+            string kzHours = switch nowCode
+                10 => '02:00–05:00 NY'
+                11 => '07:00–10:00 NY'
+                12 => '10:00–12:00 NY'
+                13 => '13:30–16:00 NY'
+                14 => '20:00–01:00 NY'
+                => ''
+            sessTip := sessStr + ' · ' + kzHours
+        sessTip += '\nNext: ' + nextName + ' in ' + str.tostring(nextMin) + ' min'
+    else
+        sessTip := 'No active session'
+        sessTip += '\nNext: ' + nextName + ' in ' + str.tostring(nextMin) + ' min'
+    targetTable.cell(0, 7, 'Session', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 7, sessStr, text_color = sessCol, text_size = SZ, text_halign = text.align_left, tooltip = sessTip)
+
+    // Row 8 — IPDA Premium/Discount
+    string pd20 = ipdaPD20 == 1 ? 'P' : ipdaPD20 == -1 ? 'D' : '—'
+    string pd40 = ipdaPD40 == 1 ? 'P' : ipdaPD40 == -1 ? 'D' : '—'
+    string pd60 = ipdaPD60 == 1 ? 'P' : ipdaPD60 == -1 ? 'D' : '—'
+    string ipdaStr = '20:' + pd20 + ' 40:' + pd40 + ' 60:' + pd60
+    int    discountCount = (ipdaPD20 == -1 ? 1 : 0) + (ipdaPD40 == -1 ? 1 : 0) + (ipdaPD60 == -1 ? 1 : 0)
+    int    premiumCount  = (ipdaPD20 == 1 ? 1 : 0) + (ipdaPD40 == 1 ? 1 : 0) + (ipdaPD60 == 1 ? 1 : 0)
+    // ICT convention: Discount = bullish (green), Premium = bearish (red)
+    color  ipdaDashCol = discountCount >= 3 ? supportCol : premiumCount >= 3 ? resistanceCol : math.max(discountCount, premiumCount) >= 2 ? color.new(COLOR_RANGE, 0) : color.gray
+    string ipdaTip = 'P = Premium (above equilibrium — bearish)\nD = Discount (below equilibrium — bullish)'
+    float dHalf60 = (ipdaHigh60 - ipdaLow60) / 2
+    float dHalf40 = (ipdaHigh40 - ipdaLow40) / 2
+    float dHalf20 = (ipdaHigh20 - ipdaLow20) / 2
+    string dp60 = dHalf60 > 0 ? ' (' + str.tostring(math.round(math.abs(close - ipdaEQ60) / dHalf60 * 100)) + '%)' : ''
+    string dp40 = dHalf40 > 0 ? ' (' + str.tostring(math.round(math.abs(close - ipdaEQ40) / dHalf40 * 100)) + '%)' : ''
+    string dp20 = dHalf20 > 0 ? ' (' + str.tostring(math.round(math.abs(close - ipdaEQ20) / dHalf20 * 100)) + '%)' : ''
+    ipdaTip += '\n20d: ' + (ipdaPD20 == 1 ? 'P' : ipdaPD20 == -1 ? 'D' : 'EQ') + dp20 + ' · EQ ' + str.tostring(ipdaEQ20, format.mintick)
+    ipdaTip += '\n40d: ' + (ipdaPD40 == 1 ? 'P' : ipdaPD40 == -1 ? 'D' : 'EQ') + dp40 + ' · EQ ' + str.tostring(ipdaEQ40, format.mintick)
+    ipdaTip += '\n60d: ' + (ipdaPD60 == 1 ? 'P' : ipdaPD60 == -1 ? 'D' : 'EQ') + dp60 + ' · EQ ' + str.tostring(ipdaEQ60, format.mintick)
+    if discountCount >= 3
+        ipdaTip += '\n3/3 Discount — strong bullish alignment'
+    else
+        if premiumCount >= 3
+            ipdaTip += '\n3/3 Premium — strong bearish alignment'
+    targetTable.cell(0, 8, 'Ranges', text_color = lblCol, text_size = SZ, text_halign = text.align_right)
+    targetTable.cell(1, 8, ipdaStr, text_color = ipdaDashCol, text_size = SZ, text_halign = text.align_left, tooltip = ipdaTip)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// §8 — ALERT CONDITIONS
+// ══════════════════════════════════════════════════════════════════════════════
+
+// Consolidated OB detection (any active layer)
+bool anyBearOB = (showZZ1 and isBear1) or (showZZ2 and isBear2) or (showZZ3 and isBear3) or (showZZ4 and isBear4)
+bool anyBullOB = (showZZ1 and isBull1) or (showZZ2 and isBull2) or (showZZ3 and isBull3) or (showZZ4 and isBull4)
+
+// Confluence OB: a new OB with ★ (≥ 3 ZZ layers agree at this price)
+bool confOB = false
+if anyBearOB or anyBullOB
+    float newOBP = anyBearOB ? (showZZ1 and isBear1 ? obPrice1 : showZZ2 and isBear2 ? obPrice2 : showZZ3 and isBear3 ? obPrice3 : showZZ4 and isBear4 ? obPrice4 : na) : (showZZ1 and isBull1 ? obPrice1 : showZZ2 and isBull2 ? obPrice2 : showZZ3 and isBull3 ? obPrice3 : showZZ4 and isBull4 ? obPrice4 : na)
+    if not na(newOBP) and not na(atrVal)
+        confOB := pool.calcConfluence(newOBP, atrVal) >= 3
+
+// OTE zone entered: price crosses into the 61.8%–78.6% retracement zone
+bool oteEntered = not na(oteTopG) and not na(oteBotG) and ((close <= oteTopG and close >= oteBotG) and (close[1] > oteTopG or close[1] < oteBotG))
+
+// ── §8a Order Block Alerts (consolidated) ──────────────────────────────────
+alertcondition(anyBearOB, 'Bearish OB Detected',    'Bearish Order Block detected · {{ticker}} at {{close}}.')
+alertcondition(anyBullOB, 'Bullish OB Detected',    'Bullish Order Block detected · {{ticker}} at {{close}}.')
+alertcondition(confOB,    'Confluence OB (★)',       'High-confluence Order Block detected (3+ layers) · {{ticker}} at {{close}}.')
+
+// ── §8a.1 Breaker Block Alerts ───────────────────────────────────────────────
+alertcondition(breakerBull, 'Bullish Breaker Formed',  'A bearish Order Block was broken and flipped to a bullish Breaker · {{ticker}} at {{close}}.')
+alertcondition(breakerBear, 'Bearish Breaker Formed',  'A bullish Order Block was broken and flipped to a bearish Breaker · {{ticker}} at {{close}}.')
+
+// ── §8b OTE Entry Alert ────────────────────────────────────────────────────
+alertcondition(oteEntered, 'OTE Zone Entered',       'Price entered the Optimal Trade Entry zone (61.8%–78.6%) · {{ticker}} at {{close}}.')
+
+// ── §8b.1 Liquidity Sweep Alert ─────────────────────────────────────────────
+alertcondition(sweepDetected, 'Liquidity Swept',      'Price swept a liquidity pool (equal high/low) · {{ticker}} at {{close}}.')
+
+// ── §8c Zone Cross Alerts ──────────────────────────────────────────────────
+alertcondition(tgtMarker,  'Target Reached',         'Price reached the target zone · {{ticker}} at {{close}}.')
+alertcondition(invMarker,  'Invalidation Broken',    'Price broke the invalidation zone · {{ticker}} at {{close}}.')
+
+// ── §8d Bias Reversal Alerts ───────────────────────────────────────────────
+alertcondition(biasReversalBull, 'Bias Reversal: Bullish',  'Trend direction flipped to bullish · {{ticker}} at {{close}}.')
+alertcondition(biasReversalBear, 'Bias Reversal: Bearish',  'Trend direction flipped to bearish · {{ticker}} at {{close}}.')

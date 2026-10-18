@@ -1,0 +1,1649 @@
+// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+// © ricksimpsontrading — Medallion Cipher V1.0.0
+// The mathematical core is a Hidden Markov Model with online Baum-Welch
+// parameter estimation — the same class of algorithm that powered
+// Renaissance Technologies' Medallion Fund.
+//@version=6
+indicator("Medallion Cipher", "MC", overlay = false, max_bars_back = 500,
+     max_labels_count = 200)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §1 — CONSTANTS · TYPES · ENUMS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Color palette (Material Design)
+const color C_BG       = #1E1E1E
+const color C_ACCENT   = #4FC3F7
+const color C_BULL     = #26A69A
+const color C_BULL2    = #00E676
+const color C_BEAR     = #EF5350
+const color C_BEAR2    = #FF1744
+const color C_GOLD     = #FFD700
+const color C_AMBER    = #FFAB40
+const color C_PURPLE   = #AB47BC
+const color C_LIME     = #C6FF00
+const color C_GRAY     = #757575
+const color C_DIMGRAY  = #424242
+const color C_TEXTDIM  = #9E9E9E
+
+// Math primitives
+const float EPSILON    = 1e-10     // Division guard / zero-check floor
+const float LN2        = 0.6931472 // ln(2) for Shannon Entropy log₂ conversion
+const float SQRT2PI    = 2.5066283 // √(2π) for Gaussian PDF normalization
+
+// HMM hidden states
+const int HMM_BULL    = 0
+const int HMM_BEAR    = 1
+const int HMM_RANGE   = 2
+const int HMM_CRISIS  = 3
+const int HMM_N       = 4
+
+// Signal indices
+const int SIG_REV     = 0
+const int SIG_TRD     = 1
+const int SIG_SES     = 2
+const int SIG_DJV     = 3
+const int SIG_AUT     = 4
+const int SIG_HUR     = 5
+const int SIG_ENT     = 6
+const int SIG_VOL     = 7
+const int SIG_COR     = 8
+const int SIG_ERN     = 9
+const int SIG_MAC     = 10     // Macro regime proxy
+const int SIG_COUNT   = 11
+
+// Tier levels
+const int TIER_S      = 0
+const int TIER_A      = 1
+const int TIER_B      = 2
+const int TIER_C      = 3
+
+// Base signal weights — calibrated by Renaissance methodology hierarchy,
+// auto-adjusted at runtime by HMM regime modulation (§6) and Self-Correction (§18).
+//
+// Documented hierarchy (Zuckerman, 2019):
+//   Tier 1: Mean Reversion = "bedrock strategy for over a decade"
+//   Tier 2: Pattern Recognition = "multidimensional anomalies" + "particularly effective"
+//   Tier 3: Trend Persistence = one of two original strategies (pre-Berlekamp)
+//   Tier 4: Supporting signals = temporal, microstructure, macro
+//   Tier 5: Filters = entropy (predictability gate), cross-asset (optional)
+//
+// These are PRIORS. §18 Self-Correction dynamically re-weights at runtime
+// based on measured predictive accuracy with p < 0.01 significance gate.
+const float W_REV     = 2.0    // Tier 1: bedrock (Zuckerman Ch.5 — "remained bedrock for over a decade")
+const float W_TRD     = 1.2    // Tier 3: original strategy (one of two pillars, pre-Berlekamp)
+const float W_SES     = 0.8    // Tier 4: temporal anomalies (day-of-week, overnight, killzones)
+const float W_DJV     = 1.5    // Tier 2: kernel pattern matching ("multidimensional anomalies" — Zuckerman)
+const float W_AUT     = 0.8    // Tier 4: serial correlation (statistical backbone of momentum + reversion)
+const float W_HUR     = 0.6    // Tier 5: regime characterization (Hurst exponent, HMM complement)
+const float W_ENT     = 0.6    // Tier 5: predictability gate (Shannon — Berlekamp's mentor at Bell Labs)
+const float W_VOL     = 0.9    // Tier 4: microstructure ("analyzing order flow" — Renaissance core competency)
+const float W_COR     = 0.5    // Tier 5: cross-asset lead/lag (optional, requires symbol)
+const float W_ERN     = 0.7    // Tier 4: PEAD earnings drift (equities only, infrequent but potent)
+const float W_MAC     = 0.6    // Tier 5: macro proxy (economic indicators as statistical variables)
+
+// Tier thresholds — Renaissance: "right 50.75% of the time" (Mercer).
+// Edge is small but consistent. Thresholds define signal quality tiers for the composite score.
+const float THR_S     = 0.75   // Supreme: very high multi-module agreement
+const float THR_A     = 0.55   // Strong: clear directional conviction
+const float THR_B     = 0.35   // Moderate: actionable — frequent enough for statistical edge
+
+// Internal calibration — expert-tuned, not exposed to user
+const int   REV_LEN   = 50     // Mean Reversion lookback (Z-score window)
+const float REV_ZTHR  = 2.0    // Z-Score threshold (2σ standard)
+const int   TRD_LEN   = 20     // Trend regression length
+const int   TRD_PERSIST = 10   // Trend persistence bars
+const int   HMM_ATR   = 14     // HMM observation ATR length
+const float HMM_LEARN = 0.02   // HMM emission learn rate
+const float HMM_DECAY = 0.998  // HMM transition decay
+const int   HMM_VLEN  = 50     // HMM volatility observation normalization window (matches MAC_LEN)
+const int   HUR_LEN   = 100    // Hurst R/S lookback
+const int   ENT_LEN   = 50     // Shannon Entropy lookback
+const int   ENT_BINS  = 12     // Entropy histogram bins (12 bins × 50 obs ≈ 4 obs/bin)
+const int   DJV_PAT   = 8      // Déjà Vu pattern length
+const int   DJV_LOOK  = 200    // Déjà Vu search lookback
+const float DJV_BW    = 0.50   // Nadaraya-Watson kernel bandwidth (Laufer)
+const int   DJV_FWD   = 5      // Déjà Vu forward window
+const int   AUT_LEN   = 30     // Autocorrelation window
+const int   AUT_LAG   = 5      // Autocorrelation max lag
+const int   VMC_LEN   = 20     // Volume lookback
+const float VMC_THR   = 1.5    // Volume relative threshold
+const int   COR_LEN   = 20     // Cross-Asset correlation length
+const int   ERN_DECAY = 20     // Post-earnings drift decay (bars)
+const float ERN_SURP  = 0.10   // Earnings surprise significance threshold (10%)
+const float MTF_MIN   = 0.20   // MTF minimum score for alignment
+const int   MAC_LEN   = 50     // Macro proxy Z-score lookback
+const float TRK_RATE  = 0.05   // Self-correction adaptation rate
+const int   TRK_WIN   = 100    // Self-correction validation window
+const float TRK_TSIG  = 2.576  // t-statistic threshold for p < 0.01 (two-tailed)
+
+//@type Signal module output with directional score, raw data, and confidence
+//@field value Normalized directional score [-1, +1]
+//@field raw   Unprocessed indicator value (e.g., Hurst exponent, Z-score)
+//@field conf  Signal confidence [0, 1] — how reliable this reading is
+type SignalScore
+    float value = 0.0
+    float raw   = 0.0
+    float conf  = 0.0
+
+//@function Format value as signed score string (+0.45, -0.12)
+method fmtValue(SignalScore this) =>
+    (this.value >= 0 ? "+" : "") + str.tostring(this.value, "#.00")
+
+//@function Direction icon based on value threshold
+method dirIcon(SignalScore this) =>
+    this.value > 0.05 ? "▲" : this.value < -0.05 ? "▼" : "●"
+
+//@function Direction color based on value threshold
+method dirColor(SignalScore this) =>
+    this.value > 0.05 ? C_BULL : this.value < -0.05 ? C_BEAR : C_DIMGRAY
+
+//@function Whether the signal is active (not neutral)
+method isActive(SignalScore this) =>
+    math.abs(this.value) > 0.05
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §2 — INPUTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const string G_MOD = "Modules"
+const string G_COR = "Cross-Asset"
+const string G_VIS = "Display"
+
+// ——— Modules (toggle each analysis engine on/off) ———
+
+bool  i_hurOn      = input.bool(true, "Hurst Exponent",     group = G_MOD,
+     tooltip = "Measures whether the market is trending or mean-reverting using Rescaled Range analysis. Essential for regime characterization. Disable only to reduce computation on very slow devices.")
+bool  i_entOn      = input.bool(true, "Shannon Entropy",    group = G_MOD,
+     tooltip = "Measures market predictability using information theory. Low entropy = structured, exploitable patterns. High entropy = random noise where signals are less reliable. Recommended to keep enabled.")
+bool  i_vmcOn      = input.bool(true, "Volume Analysis",    group = G_MOD,
+     tooltip = "Analyzes trade flow and accumulation/distribution patterns. Confirms whether price moves have institutional backing. Disable for instruments without volume data (some forex pairs, exotic derivatives).")
+bool  i_corOn      = input.bool(false,"Cross-Asset",        group = G_MOD,
+     tooltip = "Detects lead/lag correlations with up to 3 reference instruments configured below. Disabled by default — requires manual symbol selection. Choose instruments with a known relationship to your chart.")
+bool  i_macOn      = input.bool(true, "Macro Sentiment",    group = G_MOD,
+     tooltip = "Derives market-wide risk sentiment from VIX (fear gauge), US 10-Year bond yields (rate expectations), and the Dollar Index (currency strength). Works on all asset classes.")
+bool  i_mtfOn      = input.bool(true, "MTF Confirmation",   group = G_MOD,
+     tooltip = "Compares signal direction with a higher timeframe. Automatically selects the next major timeframe based on your chart interval. When the bigger picture disagrees, the signal tier is demoted.")
+bool  i_trkOn      = input.bool(true, "Self-Correction",    group = G_MOD,
+     tooltip = "Continuously measures each module's predictive accuracy and auto-adjusts its weight. High-performing modules are amplified, underperformers dampened. Recommended to keep enabled for best adaptation.")
+int   i_minConfl   = input.int(50,   "Min Confluence %",    minval = 0, maxval = 100, step = 5, group = G_MOD,
+     tooltip = "Minimum percentage of active modules that must agree on the same direction for a signal alert to fire. 50% (default) = at least half agree. 70% = stricter, fewer alerts but higher quality.")
+
+// ——— Cross-Asset (up to 3 reference instruments) ———
+
+string i_corSym    = input.symbol("", "Symbol 1", group = G_COR,
+     tooltip = "Primary cross-asset reference. Choose an instrument with a known economic relationship to your chart. Equities: sector ETF (XLK, XLF) or index (SPY). Crypto: BTC or ETH. Forex: correlated pair, Gold, or Oil.",
+     active = i_corOn)
+string i_corSym2   = input.symbol("", "Symbol 2", group = G_COR,
+     tooltip = "Secondary reference for diversification. Best results when covering a different asset class than Symbol 1. Equities: commodity (GLD, USO) or bonds (TLT). Crypto: stablecoin or DeFi index. Empty = skipped.",
+     active = i_corOn)
+string i_corSym3   = input.symbol("", "Symbol 3", group = G_COR,
+     tooltip = "Tertiary cross-market signal. Maximum benefit when all three symbols span different asset classes (e.g., equity + commodity + currency). Empty = automatically skipped.",
+     active = i_corOn)
+
+// ——— Display (visual settings — no impact on analysis) ———
+
+bool  i_showDash   = input.bool(true, "Dashboard",          group = G_VIS,
+     tooltip = "Shows the real-time statistics panel with all signal scores, engine status, and analysis metrics. Hover over any cell for a detailed explanation of what it means.")
+string i_dashSize  = input.string("Normal", "Dashboard Size", group = G_VIS,
+     options = ["Tiny", "Small", "Normal"],
+     tooltip = "Text size for the dashboard. Use Tiny on small screens or when the panel overlaps price action. Normal is best for dedicated analysis.")
+bool  i_showBg     = input.bool(true, "Regime Background",  group = G_VIS,
+     tooltip = "Tints the oscillator background based on the current market regime. Green = Bull, Red = Bear/Crisis, Amber = Range. Lets you instantly see the market state at a glance.")
+bool  i_showLabels = input.bool(true, "Signal Labels",      group = G_VIS,
+     tooltip = "Shows floating labels at signal crossover points with the tier name, composite score, confluence, and regime. Useful for visual analysis and understanding signal timing.")
+bool  i_plotNames  = input.bool(true, "Plot Names",         group = G_VIS,
+     tooltip = "Shows small text labels at the right edge of each oscillator line (Composite, Signal, MeanRev, Trend, etc.) to help identify which trace is which.")
+bool  i_barColor   = input.bool(false,"Candle Coloring",    group = G_VIS,
+     tooltip = "Colors main chart candles based on composite score. Green = bullish, red = bearish, neutral = unchanged. Disabled by default to avoid conflicting with your chart's existing color scheme.")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §3 — HELPERS & MATH CORE
+// ─────────────────────────────────────────────────────────────────────────────
+
+f_clamp(float v, float lo, float hi) =>
+    math.min(math.max(v, lo), hi)
+
+f_normalize(float v, float thr) =>
+    f_clamp(v / math.max(math.abs(thr), EPSILON), -1.0, 1.0)
+
+f_sigmoid(float x, float gain) =>
+    2.0 / (1.0 + math.exp(-gain * x)) - 1.0
+
+f_kaufmanER(float src, int len) =>
+    float dir = math.abs(src - src[len])
+    float vol = math.sum(math.abs(src - src[1]), len)
+    dir / math.max(vol, EPSILON)
+
+f_normSlope(float src, int len) =>
+    float sl = ta.linreg(src, len, 0) - ta.linreg(src, len, 1)
+    float sd = ta.stdev(src, len)
+    sl / math.max(sd, EPSILON)
+
+f_gaussPDF(float obs, float mu, float sigma) =>
+    float s2 = math.max(sigma * sigma, EPSILON)
+    float ex = math.max(-0.5 * (obs - mu) * (obs - mu) / s2, -20.0)
+    math.exp(ex) / (sigma * SQRT2PI)
+
+f_pearsonArr(array<float> a, array<float> b, int len) =>
+    int n = math.min(len, a.size(), b.size())
+    if n < 3
+        0.0
+    else
+        float sA = 0.0
+        float sB = 0.0
+        float sAB = 0.0
+        float sA2 = 0.0
+        float sB2 = 0.0
+        for i = 0 to n - 1
+            float va = a.get(i)
+            float vb = b.get(i)
+            sA  += va
+            sB  += vb
+            sAB += va * vb
+            sA2 += va * va
+            sB2 += vb * vb
+        float num = n * sAB - sA * sB
+        float den = math.sqrt(math.max((n * sA2 - sA * sA) * (n * sB2 - sB * sB), EPSILON))
+        f_clamp(num / den, -1.0, 1.0)
+
+f_fmtScore(float s) =>
+    (s >= 0 ? "+" : "") + str.tostring(s, "#.00")
+
+f_scoreColor(float s) =>
+    s > 0.05 ? C_BULL : s < -0.05 ? C_BEAR : C_DIMGRAY
+
+f_hmmName(int s) =>
+    switch s
+        HMM_BULL   => "BULL"
+        HMM_BEAR   => "BEAR"
+        HMM_RANGE  => "RANGE"
+        HMM_CRISIS => "CRISIS"
+        => "—"
+
+f_hmmColor(int s) =>
+    switch s
+        HMM_BULL   => C_BULL
+        HMM_BEAR   => C_BEAR
+        HMM_RANGE  => C_AMBER
+        HMM_CRISIS => C_BEAR2
+        => C_DIMGRAY
+
+f_tierName(int t) =>
+    switch t
+        TIER_S => "S"
+        TIER_A => "A"
+        TIER_B => "B"
+        => "C"
+
+f_tierColor(int t) =>
+    switch t
+        TIER_S => C_GOLD
+        TIER_A => C_ACCENT
+        TIER_B => C_AMBER
+        => C_GRAY
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §3b — REGIME WEIGHT MATRIX (initialized once)
+// ─────────────────────────────────────────────────────────────────────────────
+
+//                     REV  TRD  SES  DJV  AUT  HUR  ENT  VOL  COR  ERN  MAC
+// BULL  (trending up)  0.4  1.5  0.8  1.0  1.2  1.3  1.0  1.0  1.3  1.0  0.8
+// BEAR  (trending dn)  0.4  1.5  0.8  1.0  1.2  1.3  1.0  1.2  1.3  1.4  1.3
+// RANGE (mean revert)  1.5  0.3  1.0  1.0  0.6  1.3  1.0  1.0  0.8  1.0  0.7
+// CRISIS (volatile)    0.5  0.5  1.3  1.2  1.0  1.0  1.3  1.3  0.5  0.5  1.5
+//
+// Asymmetry notes (documented):
+//   VOL: BEAR=1.2 — panic selling produces more informative volume signals
+//   ERN: BEAR=1.4 — negative earnings surprises hit harder (asymmetric reaction)
+//   ERN: BULL=1.0 — positive surprises already priced in by market optimism
+
+var matrix<float> regMtx = matrix.new<float>(HMM_N, SIG_COUNT, 1.0)
+var bool regMtxInit = false
+if not regMtxInit
+    // BULL
+    regMtx.set(HMM_BULL, SIG_REV, 0.4)
+    regMtx.set(HMM_BULL, SIG_TRD, 1.5)
+    regMtx.set(HMM_BULL, SIG_SES, 0.8)
+    regMtx.set(HMM_BULL, SIG_AUT, 1.2)
+    regMtx.set(HMM_BULL, SIG_HUR, 1.3)
+    regMtx.set(HMM_BULL, SIG_COR, 1.3)
+    regMtx.set(HMM_BULL, SIG_MAC, 0.8)
+    // BEAR (asymmetric: VOL + ERN amplified)
+    regMtx.set(HMM_BEAR, SIG_REV, 0.4)
+    regMtx.set(HMM_BEAR, SIG_TRD, 1.5)
+    regMtx.set(HMM_BEAR, SIG_SES, 0.8)
+    regMtx.set(HMM_BEAR, SIG_AUT, 1.2)
+    regMtx.set(HMM_BEAR, SIG_HUR, 1.3)
+    regMtx.set(HMM_BEAR, SIG_VOL, 1.2)
+    regMtx.set(HMM_BEAR, SIG_COR, 1.3)
+    regMtx.set(HMM_BEAR, SIG_ERN, 1.4)
+    regMtx.set(HMM_BEAR, SIG_MAC, 1.3)
+    // RANGE
+    regMtx.set(HMM_RANGE, SIG_REV, 1.5)
+    regMtx.set(HMM_RANGE, SIG_TRD, 0.3)
+    regMtx.set(HMM_RANGE, SIG_AUT, 0.6)
+    regMtx.set(HMM_RANGE, SIG_HUR, 1.3)
+    regMtx.set(HMM_RANGE, SIG_COR, 0.8)
+    regMtx.set(HMM_RANGE, SIG_MAC, 0.7)
+    // CRISIS
+    regMtx.set(HMM_CRISIS, SIG_REV, 0.5)
+    regMtx.set(HMM_CRISIS, SIG_TRD, 0.5)
+    regMtx.set(HMM_CRISIS, SIG_SES, 1.3)
+    regMtx.set(HMM_CRISIS, SIG_DJV, 1.2)
+    regMtx.set(HMM_CRISIS, SIG_ENT, 1.3)
+    regMtx.set(HMM_CRISIS, SIG_VOL, 1.3)
+    regMtx.set(HMM_CRISIS, SIG_COR, 0.5)
+    regMtx.set(HMM_CRISIS, SIG_ERN, 0.5)
+    regMtx.set(HMM_CRISIS, SIG_MAC, 1.5)
+    regMtxInit := true
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §4 — MEAN REVERSION ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+float rev_mean   = ta.sma(close, REV_LEN)
+float rev_sd     = ta.stdev(close, REV_LEN)
+float rev_zRaw   = (close - rev_mean) / math.max(rev_sd, EPSILON)
+float rev_zScore = -f_normalize(rev_zRaw, REV_ZTHR)
+
+float rev_gapZ   = (open - close[1]) / math.max(ta.stdev(open - close[1], REV_LEN), EPSILON)
+float rev_gap    = -f_normalize(rev_gapZ, 2.0)
+
+// RSI: dual-speed blend — RSI(7) captures fast reversion (Berlekamp: 1.5-day avg holding),
+// RSI(14) provides stability. Blended 50/50 for best of both.
+float rev_rsiF   = ta.rsi(close, 7)
+float rev_rsiS   = ta.rsi(close, 14)
+float rev_rsi    = (rev_rsiF + rev_rsiS) * 0.5
+float rev_rsiSc  = -f_normalize(rev_rsi - 50.0, 30.0)
+
+float rev_bbU    = rev_mean + 2.0 * rev_sd
+float rev_bbD    = rev_mean - 2.0 * rev_sd
+float rev_bbP    = (close - rev_bbD) / math.max(rev_bbU - rev_bbD, EPSILON)
+float rev_bbS    = -(rev_bbP * 2.0 - 1.0)
+
+float rev_score  = rev_zScore * 0.35 + rev_gap * 0.20 + rev_rsiSc * 0.20 + rev_bbS * 0.25
+float rev_conf   = f_clamp(math.abs(rev_zRaw) / math.max(REV_ZTHR, EPSILON), 0.0, 1.0)
+SignalScore sig_rev = SignalScore.new(f_clamp(rev_score, -1.0, 1.0), rev_zRaw, rev_conf)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §5 — TREND PERSISTENCE ENGINE
+// ─────────────────────────────────────────────────────────────────────────────
+
+float trd_slope = f_normSlope(close, TRD_LEN)
+
+// Streak via backward loop (no var — safe for request.security)
+int trd_streak = 0
+if close > close[1]
+    trd_streak := 1
+    for i = 1 to math.min(TRD_PERSIST * 2, 50)
+        if close[i] > close[i + 1]
+            trd_streak += 1
+        else
+            break
+else
+    if close < close[1]
+        trd_streak := -1
+        for i = 1 to math.min(TRD_PERSIST * 2, 50)
+            if close[i] < close[i + 1]
+                trd_streak -= 1
+            else
+                break
+
+float trd_persist = f_clamp(float(trd_streak) / math.max(float(TRD_PERSIST), 1.0), -1.0, 1.0)
+float trd_er      = f_kaufmanER(close, TRD_LEN)
+
+// Trend duration kernel regression (Laufer):
+// Track completed trend durations, then for current streak estimate
+// survival probability using kernel-weighted historical analysis.
+var array<float> trdDurHist = array.new_float(0)
+var int trdPrevStreak = 0
+
+// Record completed trends (when direction flips)
+int trdAbsStrk = math.abs(trd_streak)
+int trdPrevAbs = math.abs(trdPrevStreak)
+if trdAbsStrk <= 1 and trdPrevAbs >= 3
+    trdDurHist.push(float(trdPrevAbs))
+    if trdDurHist.size() > 200
+        trdDurHist.shift()
+trdPrevStreak := trd_streak
+
+// Kernel survival: what fraction of past trends lasted longer than current?
+float trdSurvival = 0.5
+if trdAbsStrk >= 2 and trdDurHist.size() >= 10
+    float trdKwSum = 0.0
+    float trdKwSurv = 0.0
+    for i = 0 to trdDurHist.size() - 1
+        float pastDur = trdDurHist.get(i)
+        // Gaussian kernel: similarity to current streak length
+        float dist = (pastDur - float(trdAbsStrk)) / math.max(float(TRD_PERSIST), 1.0)
+        float kw = math.exp(-0.5 * dist * dist)
+        trdKwSum += kw
+        if pastDur > float(trdAbsStrk)
+            trdKwSurv += kw
+    trdSurvival := trdKwSum > EPSILON ? trdKwSurv / trdKwSum : 0.5
+
+float trd_dir     = trd_slope > 0 ? 1.0 : trd_slope < 0 ? -1.0 : 0.0
+// Strength now incorporates survival probability as persistence confidence
+float trd_str     = math.abs(trd_slope) * 0.30 + math.abs(trd_persist) * 0.25 +
+     math.max(trd_er * 2.0 - 1.0, 0.0) * 0.25 + trdSurvival * 0.20
+SignalScore sig_trd = SignalScore.new(trd_dir * f_clamp(trd_str, 0.0, 1.0), trd_slope, f_clamp(trd_er * trdSurvival * 2.0, 0.0, 1.0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §6 — HMM REGIME DETECTION (Forward Algorithm + Online Baum-Welch)
+//
+// α_t(j) = [ Σ_i α_{t-1}(i) · A(i,j) ] · B_j(o_t)   (normalized)
+// Multivariate observation: o_t = (return, volatility)
+// B_j(o) = N(return|μ_r,σ_r) × N(vol|μ_v,σ_v)  (diagonal covariance)
+//
+// 4 states selected per BIC analysis in financial HMM literature:
+//   - Nguyen & Nguyen (2018, MDPI): "four-state HMM is optimal" for S&P 500
+//   - LuxAlgo (2026): 4 states (Bull, Bear, LowVol, Crash)
+//   - Wang et al. (2020, MDPI): 3 states common but 4 captures crisis distinctly
+//
+// Our advantage over LuxAlgo: ONLINE Baum-Welch (adaptive) vs their static HMM.
+// Soft emission updates: all states learn proportionally to α (not just argmax).
+// Emissions learn from data via exponential forgetting (HMM_LEARN=0.02).
+// ─────────────────────────────────────────────────────────────────────────────
+
+var matrix<float> hmmA      = matrix.new<float>(HMM_N, HMM_N, 0.0)
+var matrix<float> hmmCounts = matrix.new<float>(HMM_N, HMM_N, 1.0)
+var array<float>  hmmAlpha  = array.new_float(HMM_N, 1.0 / HMM_N)
+var array<float>  hmmMu     = array.new_float(HMM_N, 0.0)
+var array<float>  hmmSig    = array.new_float(HMM_N, 1.0)
+var array<float>  hmmVolMu  = array.new_float(HMM_N, 0.0)
+var array<float>  hmmVolSig = array.new_float(HMM_N, 1.0)
+var int hmmPrev   = HMM_RANGE
+var int hmmCur    = HMM_RANGE
+var bool hmmReady = false
+
+if not hmmReady
+    // Transition priors (diagonal-dominant: states persist)
+    hmmA.set(0, 0, 0.92)
+    hmmA.set(0, 1, 0.02)
+    hmmA.set(0, 2, 0.04)
+    hmmA.set(0, 3, 0.02)
+    hmmA.set(1, 0, 0.02)
+    hmmA.set(1, 1, 0.92)
+    hmmA.set(1, 2, 0.04)
+    hmmA.set(1, 3, 0.02)
+    hmmA.set(2, 0, 0.08)
+    hmmA.set(2, 1, 0.08)
+    hmmA.set(2, 2, 0.80)
+    hmmA.set(2, 3, 0.04)
+    hmmA.set(3, 0, 0.04)
+    hmmA.set(3, 1, 0.04)
+    hmmA.set(3, 2, 0.12)
+    hmmA.set(3, 3, 0.80)
+    // Emission priors: μ and σ per state for ATR-normalized returns
+    //   BULL:   positive returns, moderate vol
+    //   BEAR:   negative returns, HIGHER vol (documented asymmetry: VIX inversely correlated)
+    //   RANGE:  near-zero returns, low vol
+    //   CRISIS: negative returns (crash bias), extreme vol
+    hmmMu.set(HMM_BULL,   0.40)
+    hmmMu.set(HMM_BEAR,  -0.40)
+    hmmMu.set(HMM_RANGE,  0.00)
+    hmmMu.set(HMM_CRISIS,-0.20)
+    hmmSig.set(HMM_BULL,   0.80)
+    hmmSig.set(HMM_BEAR,   1.20)
+    hmmSig.set(HMM_RANGE,  0.40)
+    hmmSig.set(HMM_CRISIS, 2.00)
+    // Volatility emission priors (Z-score of ATR vs its own SMA)
+    // BULL/RANGE: declining or stable vol; BEAR: rising; CRISIS: extreme spike
+    hmmVolMu.set(HMM_BULL,  -0.3)
+    hmmVolMu.set(HMM_BEAR,   0.5)
+    hmmVolMu.set(HMM_RANGE, -0.2)
+    hmmVolMu.set(HMM_CRISIS, 1.5)
+    hmmVolSig.set(HMM_BULL,   0.8)
+    hmmVolSig.set(HMM_BEAR,   1.0)
+    hmmVolSig.set(HMM_RANGE,  0.5)
+    hmmVolSig.set(HMM_CRISIS, 1.5)
+    hmmReady := true
+
+// Observation 1: ATR-normalized return (guarded against na on early bars)
+float hmmATR = ta.atr(HMM_ATR)
+float hmmObs = nz((close - nz(close[1], close)) / math.max(nz(hmmATR, close * 0.01), EPSILON))
+
+// Observation 2: Volatility Z-score (ATR vs its own SMA — global scope required)
+float hmmVolAvg = nz(ta.sma(hmmATR, HMM_VLEN))
+float hmmVolSd  = nz(ta.stdev(hmmATR, HMM_VLEN))
+float hmmVolObs = hmmVolSd > EPSILON ? (nz(hmmATR) - hmmVolAvg) / hmmVolSd : 0.0
+
+// Forward step: α_new(j) = [Σ_i α(i)·A(i,j)] · B_j(obs)
+// Only update when we have valid data; hmmAlpha stays at uniform prior [0.25...] until then
+if bar_index > HMM_ATR
+    array<float> hmmNew = array.new_float(HMM_N, 0.0)
+    float hmmSum = 0.0
+    for j = 0 to HMM_N - 1
+        float trans = 0.0
+        for i = 0 to HMM_N - 1
+            trans += hmmAlpha.get(i) * hmmA.get(i, j)
+        // Bivariate emission: B_j(o) = N(return|μ_r,σ_r) × N(vol|μ_v,σ_v)
+        float emitR = f_gaussPDF(hmmObs, hmmMu.get(j), hmmSig.get(j))
+        float emitV = f_gaussPDF(hmmVolObs, hmmVolMu.get(j), hmmVolSig.get(j))
+        float emit  = emitR * emitV
+        float val  = trans * math.max(emit, EPSILON)
+        hmmNew.set(j, val)
+        hmmSum += val
+
+    // Normalize
+    float hmmNorm = math.max(hmmSum, EPSILON)
+    for j = 0 to HMM_N - 1
+        hmmAlpha.set(j, hmmNew.get(j) / hmmNorm)
+
+    // Most likely state
+    hmmPrev := hmmCur
+    float hmmBest = 0.0
+    for j = 0 to HMM_N - 1
+        if hmmAlpha.get(j) > hmmBest
+            hmmBest := hmmAlpha.get(j)
+            hmmCur  := j
+
+    // Update transitions (online Bayesian)
+    for i = 0 to HMM_N - 1
+        for j = 0 to HMM_N - 1
+            hmmCounts.set(i, j, hmmCounts.get(i, j) * HMM_DECAY)
+    hmmCounts.set(hmmPrev, hmmCur, hmmCounts.get(hmmPrev, hmmCur) + 1.0)
+    for i = 0 to HMM_N - 1
+        float rowSum = 0.0
+        for j = 0 to HMM_N - 1
+            rowSum += hmmCounts.get(i, j) + 0.1
+        for j = 0 to HMM_N - 1
+            hmmA.set(i, j, (hmmCounts.get(i, j) + 0.1) / math.max(rowSum, EPSILON))
+
+    // Update emissions (soft Online EM: all states weighted by responsibility α)
+    // Hard assignment (update only argmax) is imprecise when model is uncertain.
+    // Soft assignment: each state learns proportionally to its posterior probability.
+    // This is the correct E-step approximation for streaming Baum-Welch.
+    //
+    // Adaptive learn rate: higher entropy (uncertain model) → learn faster to resolve.
+    // Stable regime → learn slowly to avoid overwriting good parameters.
+    // Range: HMM_LEARN × [1.0 (certain) → 2.5 (max uncertainty)]
+    float localH = 0.0
+    for j = 0 to HMM_N - 1
+        float av = hmmAlpha.get(j)
+        if av > EPSILON
+            localH -= av * math.log(av)
+    float normH = localH / math.max(math.log(HMM_N), EPSILON)
+    float adaptLearn = HMM_LEARN * (1.0 + normH * 1.5)
+
+    for j = 0 to HMM_N - 1
+        float w = hmmAlpha.get(j)
+        if w > 0.05   // skip negligible states to save computation
+            float rate = adaptLearn * w
+            // Return emission μ and σ
+            float hmm_oMu  = hmmMu.get(j)
+            float hmm_nMu  = (1.0 - rate) * hmm_oMu + rate * hmmObs
+            hmmMu.set(j, hmm_nMu)
+            float hmm_d    = hmmObs - hmm_nMu
+            float hmm_oVar = hmmSig.get(j) * hmmSig.get(j)
+            float hmm_nVar = (1.0 - rate) * hmm_oVar + rate * hmm_d * hmm_d
+            hmmSig.set(j, math.max(math.sqrt(math.max(hmm_nVar, EPSILON)), 0.1))
+            // Volume emission μ and σ
+            float hmm_oVMu  = hmmVolMu.get(j)
+            float hmm_nVMu  = (1.0 - rate) * hmm_oVMu + rate * hmmVolObs
+            hmmVolMu.set(j, hmm_nVMu)
+            float hmm_vd    = hmmVolObs - hmm_nVMu
+            float hmm_oVVar = hmmVolSig.get(j) * hmmVolSig.get(j)
+            float hmm_nVVar = (1.0 - rate) * hmm_oVVar + rate * hmm_vd * hmm_vd
+            hmmVolSig.set(j, math.max(math.sqrt(math.max(hmm_nVVar, EPSILON)), 0.1))
+
+// Regime change one-shot
+bool hmmChanged = hmmCur != hmmPrev
+
+// Regime instability: entropy of α measures model uncertainty
+// H(α) = -Σ α(j)·ln(α(j)) / ln(N),  normalized [0=certain, 1=uniform]
+// High instability = model can't distinguish states = potential regime transition
+float hmmEntropy = 0.0
+for j = 0 to HMM_N - 1
+    float aV = hmmAlpha.get(j)
+    if aV > EPSILON
+        hmmEntropy -= aV * math.log(aV)
+float hmmStability = 1.0 - hmmEntropy / math.max(math.log(HMM_N), EPSILON)
+
+// Probabilistic weight modulator: Σ α(j) · regimeMatrix(j, sigIdx)
+f_regMult(int sigIdx) =>
+    float r = 0.0
+    for j = 0 to HMM_N - 1
+        r += hmmAlpha.get(j) * regMtx.get(j, sigIdx)
+    r
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §7 — HURST EXPONENT (R/S Analysis — manual array computation)
+//
+// H = slope of log(R/S) vs log(n)
+// ─────────────────────────────────────────────────────────────────────────────
+
+var array<float> hurRet = array.new_float(0)
+
+// Collect log returns from bar 1 (when close[1] is valid)
+if bar_index > 0
+    hurRet.push(math.log(close / math.max(close[1], EPSILON)))
+    if hurRet.size() > HUR_LEN + 10
+        hurRet.shift()
+
+// Compute Hurst when enough data collected and module enabled
+SignalScore sig_hur = SignalScore.new()
+if i_hurOn and hurRet.size() >= HUR_LEN
+    int dLen = hurRet.size()
+    // Sub-window sizes: N, N×0.67, N×0.45, ... (factor 2/3 instead of 1/2)
+    // Gives ~7 regression points vs 4, improving OLS robustness (Qian & Rasheed 2004)
+    array<float> logN  = array.new_float(0)
+    array<float> logRS = array.new_float(0)
+
+    int sz = HUR_LEN
+    while sz >= 8 and logN.size() < 8
+        int nSub = int(math.floor(dLen / sz))
+        if nSub >= 1
+            float totRS = 0.0
+            int   valid = 0
+            for s = 0 to math.min(nSub - 1, 3)
+                int st = dLen - (s + 1) * sz
+                if st >= 0
+                    // Mean
+                    float sm = 0.0
+                    for k = 0 to sz - 1
+                        sm += hurRet.get(st + k)
+                    float mn = sm / sz
+                    // Cumulative deviation + variance
+                    float cum = 0.0
+                    float mx  = -1e18
+                    float mi  =  1e18
+                    float ssq = 0.0
+                    for k = 0 to sz - 1
+                        float d = hurRet.get(st + k) - mn
+                        cum += d
+                        mx  := math.max(mx, cum)
+                        mi  := math.min(mi, cum)
+                        ssq += d * d
+                    float R = mx - mi
+                    float S = math.sqrt(ssq / sz)
+                    if S > EPSILON and R > 0
+                        totRS += R / S
+                        valid += 1
+            if valid > 0
+                logN.push(math.log(sz))
+                logRS.push(math.log(totRS / valid))
+        sz := int(math.floor(float(sz) * 0.67))
+
+    if logN.size() >= 2
+        // OLS: slope = (nΣxy - ΣxΣy) / (nΣx² - (Σx)²)
+        int np = logN.size()
+        float sX = 0.0
+        float sY = 0.0
+        float sXY = 0.0
+        float sX2 = 0.0
+        for i = 0 to np - 1
+            float x = logN.get(i)
+            float y = logRS.get(i)
+            sX  += x
+            sY  += y
+            sXY += x * y
+            sX2 += x * x
+        float den = np * sX2 - sX * sX
+        float H = (math.abs(den) > EPSILON ?
+             (np * sXY - sX * sY) / den : 0.5)
+        H := f_clamp(H, 0.01, 0.99)
+
+        float bias = (H - 0.5) * 2.0
+        float cDir = close > close[1] ? 1.0 : close < close[1] ? -1.0 : 0.0
+        float hSc  = math.abs(bias) > 0.1 ? cDir * bias : 0.0
+        sig_hur := SignalScore.new(f_clamp(hSc, -1.0, 1.0), H, math.abs(H - 0.5) * 2.0)
+
+// Adaptive Hurst thresholds (global scope — used by cross-terms and dashboard)
+float hurRaw    = nz(sig_hur.raw)
+float hurMA     = nz(ta.sma(hurRaw, REV_LEN))
+float hurSD     = nz(ta.stdev(hurRaw, REV_LEN))
+float hurFlipTh = f_clamp(hurMA - hurSD * 0.5, 0.38, 0.48)
+float hurUpTh   = f_clamp(hurMA + hurSD * 0.5, 0.52, 0.62)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §8 — SHANNON ENTROPY (Price + Volume dual-channel)
+//
+// H = -Σ p(i) · log₂(p(i))
+// ─────────────────────────────────────────────────────────────────────────────
+
+var float prevEnt = 0.5
+
+SignalScore sig_ent = SignalScore.new()
+if i_entOn and bar_index > ENT_LEN
+    // Price entropy
+    float pMin =  1e18
+    float pMax = -1e18
+    for i = 0 to ENT_LEN - 1
+        float r = close[i] - close[i + 1]
+        pMin := math.min(pMin, r)
+        pMax := math.max(pMax, r)
+    float pRng = pMax - pMin
+    if pRng > EPSILON
+        array<int> bins = array.new_int(ENT_BINS, 0)
+        for i = 0 to ENT_LEN - 1
+            float r = close[i] - close[i + 1]
+            int b = int(math.floor((r - pMin) / pRng * (ENT_BINS - 1)))
+            b := math.max(0, math.min(b, ENT_BINS - 1))
+            bins.set(b, bins.get(b) + 1)
+        float ent = 0.0
+        float maxE = math.log(ENT_BINS) / LN2
+        for i = 0 to ENT_BINS - 1
+            float p = float(bins.get(i)) / float(ENT_LEN)
+            if p > EPSILON
+                ent -= p * math.log(p) / LN2
+        float normE = ent / math.max(maxE, EPSILON)
+
+        // Volume entropy (if available)
+        float volE = 0.5
+        if not na(volume) and volume > 0
+            float vMin =  1e18
+            float vMax = -1e18
+            for i = 0 to ENT_LEN - 1
+                float v = nz(volume[i])
+                vMin := math.min(vMin, v)
+                vMax := math.max(vMax, v)
+            float vRng = vMax - vMin
+            if vRng > EPSILON
+                array<int> vBins = array.new_int(ENT_BINS, 0)
+                for i = 0 to ENT_LEN - 1
+                    float v = nz(volume[i])
+                    int vb = int(math.floor((v - vMin) / vRng * (ENT_BINS - 1)))
+                    vb := math.max(0, math.min(vb, ENT_BINS - 1))
+                    vBins.set(vb, vBins.get(vb) + 1)
+                float vEnt = 0.0
+                for i = 0 to ENT_BINS - 1
+                    float p = float(vBins.get(i)) / float(ENT_LEN)
+                    if p > EPSILON
+                        vEnt -= p * math.log(p) / LN2
+                volE := vEnt / math.max(maxE, EPSILON)
+
+        float eDelta = normE - prevEnt
+        prevEnt := normE
+        float predict = 1.0 - normE
+        float dScore  = -f_sigmoid(eDelta * 20.0, 3.0)
+        float pvDiv   = not na(volume) and volume > 0 ? (volE - normE) * 2.0 : 0.0
+        float eScore  = dScore * predict + (math.abs(pvDiv) > 0.2 ? pvDiv * 0.3 : 0.0)
+        sig_ent := SignalScore.new(f_clamp(eScore, -1.0, 1.0), normE, predict)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §9 — SESSION ANOMALIES
+// ─────────────────────────────────────────────────────────────────────────────
+
+float ses_score = 0.0
+float ses_n     = 0.0
+
+// DOW effect
+int ses_dow = dayofweek(time, syminfo.timezone)
+float ses_pRet = (close[1] - open[1]) / math.max(open[1], EPSILON)
+float ses_ds = 0.0
+if ses_dow == dayofweek.monday
+    ses_ds := f_sigmoid(ses_pRet * 100.0, 3.0) * 0.6
+else
+    if ses_dow == dayofweek.tuesday
+        ses_ds := -f_sigmoid(ses_pRet * 100.0, 3.0) * 0.5
+    else
+        if ses_dow == dayofweek.friday
+            float wk = (close - close[4]) / math.max(close[4], EPSILON)
+            ses_ds := -f_sigmoid(wk * 100.0, 2.0) * 0.4
+if ses_dow == dayofweek.monday or ses_dow == dayofweek.tuesday or ses_dow == dayofweek.friday
+    ses_score += ses_ds
+    ses_n     += 1.0
+
+// Overnight effect
+float ses_rng = high[1] - low[1]
+float ses_cp  = (close[1] - low[1]) / math.max(ses_rng, EPSILON)
+float ses_ob  = 0.0
+if ses_cp > 0.75
+    ses_ob := (ses_cp - 0.5) * 2.0
+else
+    if ses_cp < 0.25
+        ses_ob := (ses_cp - 0.5) * 2.0
+if math.abs(ses_ob) > EPSILON
+    ses_score += f_clamp(ses_ob, -1.0, 1.0)
+    ses_n     += 1.0
+
+// Killzones
+float ses_atr14 = ta.atr(14)
+float ses_hm = hour(time, "America/New_York") + minute(time, "America/New_York") / 60.0
+bool ses_inKZ = (ses_hm >= 2.0 and ses_hm < 5.0) or (ses_hm >= 9.5 and ses_hm < 12.0) or
+     (ses_hm >= 13.5 and ses_hm < 16.0) or ses_hm >= 19.0 or ses_hm < 2.0
+if ses_inKZ
+    ses_score += f_sigmoid((close - open) / math.max(ses_atr14, EPSILON), 2.0) * 0.8
+    ses_n     += 1.0
+
+float ses_final = ses_n > 0 ? ses_score / ses_n : 0.0
+SignalScore sig_ses = SignalScore.new(f_clamp(ses_final, -1.0, 1.0), ses_score, ses_n > 0 ? 1.0 : 0.0)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §10 — DÉJÀ VU ENGINE (Nadaraya-Watson Kernel Regression — Laufer)
+//
+// Instead of binary pattern matching (correlation >= threshold),
+// all historical patterns contribute weighted by a Gaussian kernel
+// K(cr) = exp(-(1-cr)/h²) — capturing non-linear relationships.
+// ─────────────────────────────────────────────────────────────────────────────
+
+var array<float> djvRet = array.new_float(0)
+
+float djv_ret = nz((close - close[1]) / math.max(nz(close[1], close), EPSILON))
+djvRet.push(djv_ret)
+if djvRet.size() > DJV_LOOK + DJV_PAT + DJV_FWD + 10
+    djvRet.shift()
+
+SignalScore sig_djv = SignalScore.new()
+int djvTL = djvRet.size()
+if djvTL >= DJV_LOOK
+    array<float> djvCur = array.new_float(DJV_PAT)
+    for i = 0 to DJV_PAT - 1
+        djvCur.set(i, djvRet.get(djvTL - DJV_PAT + i))
+
+    float djvFwS = 0.0
+    float djvWS  = 0.0
+    int   djvMC  = 0
+    float djvBC  = 0.0
+    int   djvSE  = djvTL - DJV_PAT - DJV_FWD - 1
+    int   djvSt  = math.max(1, djvSE / math.max(math.min(djvSE, 150), 1))
+
+    for idx = 0 to djvSE by djvSt
+        array<float> djvH = array.new_float(DJV_PAT)
+        for j = 0 to DJV_PAT - 1
+            djvH.set(j, djvRet.get(idx + j))
+        float cr = f_pearsonArr(djvCur, djvH, DJV_PAT)
+        // Nadaraya-Watson kernel regression (Laufer):
+        // Gaussian kernel K(cr) = exp(-(1-cr) / h²) gives continuous
+        // similarity weighting — no binary threshold, all patterns contribute
+        // proportionally to their similarity with the current state.
+        float kw = math.exp(-(1.0 - cr) / math.max(DJV_BW * DJV_BW, EPSILON))
+        if kw > 0.01
+            float fr = 0.0
+            for k = 1 to DJV_FWD
+                int fi = idx + DJV_PAT + k - 1
+                if fi < djvTL
+                    fr += djvRet.get(fi)
+            djvFwS += fr * kw
+            djvWS  += kw
+            djvMC  += 1
+            djvBC  := math.max(djvBC, cr)
+
+    if djvMC > 0 and djvWS > 0
+        float av = djvFwS / djvWS
+        // Scale by effective sample size (kernel weight sum) instead of raw count
+        float sc = f_sigmoid(av * 100.0, 3.0) * math.min(djvWS / 3.0, 1.0)
+        sig_djv := SignalScore.new(f_clamp(sc, -1.0, 1.0), djvBC, math.min(djvWS / 5.0, 1.0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §11 — AUTOCORRELATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+float aut_ret = nz((close - close[1]) / math.max(nz(close[1], close), EPSILON))
+
+// Pre-compute lag correlations at global scope (must run every bar)
+float aut_ac1 = nz(ta.correlation(aut_ret, aut_ret[1], AUT_LEN))
+float aut_ac2 = nz(ta.correlation(aut_ret, aut_ret[2], AUT_LEN))
+float aut_ac3 = nz(ta.correlation(aut_ret, aut_ret[3], AUT_LEN))
+float aut_ac4 = nz(ta.correlation(aut_ret, aut_ret[4], AUT_LEN))
+float aut_ac5 = nz(ta.correlation(aut_ret, aut_ret[5], AUT_LEN))
+array<float> aut_acs = array.from(aut_ac1, aut_ac2, aut_ac3, aut_ac4, aut_ac5)
+
+float aut_sum = 0.0
+float aut_wt  = 0.0
+for lag = 1 to AUT_LAG
+    float ac = aut_acs.get(lag - 1)
+    float w  = 1.0 / lag
+    aut_sum += ac * w
+    aut_wt  += w
+float aut_avg = aut_sum / math.max(aut_wt, EPSILON)
+float aut_dir = aut_ret > 0 ? 1.0 : aut_ret < 0 ? -1.0 : 0.0
+float aut_sc  = 0.0
+if aut_avg > 0.05
+    aut_sc := aut_dir * math.min(aut_avg * 3.0, 1.0)
+else
+    if aut_avg < -0.05
+        aut_sc := -aut_dir * math.min(math.abs(aut_avg) * 3.0, 1.0)
+SignalScore sig_aut = SignalScore.new(f_clamp(aut_sc, -1.0, 1.0), aut_avg, f_clamp(math.abs(aut_avg) * 2.0, 0.0, 1.0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §12 — VOLUME MICROSTRUCTURE
+// ─────────────────────────────────────────────────────────────────────────────
+
+float vol_avg  = ta.sma(volume, VMC_LEN)
+float vol_rel  = na(volume) or volume == 0 ? 0.0 : volume / math.max(vol_avg, EPSILON)
+float vol_rng  = high - low
+float vol_pres = vol_rng > EPSILON ? (close - low) / vol_rng * 2.0 - 1.0 : 0.0
+float vol_z    = na(volume) ? 0.0 : (volume - vol_avg) / math.max(ta.stdev(volume, VMC_LEN), EPSILON)
+float vol_ad   = ta.cum(vol_rng > EPSILON ? ((close - low) - (high - close)) / vol_rng * nz(volume) : 0.0)
+float vol_adSl = f_normSlope(vol_ad, VMC_LEN)
+
+SignalScore sig_vol = SignalScore.new()
+if i_vmcOn and not na(volume) and volume > 0
+    float vp = vol_pres * math.min(vol_rel / VMC_THR, 2.0)
+    float sc = vp * 0.40 + f_sigmoid(vol_adSl, 2.0) * 0.35
+    if vol_z > 2.0
+        sc += vol_pres * 0.25
+    sig_vol := SignalScore.new(f_clamp(sc, -1.0, 1.0), vol_rel, f_clamp(vol_rel / (VMC_THR * 2.0), 0.0, 1.0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §13 — POST-EARNINGS ANOMALY (PEAD — Zuckerman)
+//
+// "Watching for patterns in how stocks traded following earnings announcements."
+// Detects earnings surprise via request.earnings() and tracks post-earnings
+// drift. Signal decays exponentially over ERN_DECAY bars. Returns 0 for
+// instruments without earnings data (forex, crypto, commodities).
+// ─────────────────────────────────────────────────────────────────────────────
+
+// request.earnings() must be at global scope — returns na for non-equity instruments
+float earnAct = request.earnings(syminfo.tickerid, earnings.actual, lookahead = barmerge.lookahead_off)
+float earnEst = request.earnings(syminfo.tickerid, earnings.estimate, lookahead = barmerge.lookahead_off)
+
+// Pre-compute at global scope (V6 short-circuit would skip inside conditional)
+float earnChg = ta.change(earnAct)
+
+// Detect new earnings publication (including very first non-na value)
+bool earnNew = not na(earnAct) and (na(earnAct[1]) or earnChg != 0)
+
+// Track surprise and bars since event
+var float earnSurp   = 0.0
+var int   earnBars   = 999
+var float earnVolMul = 1.0
+
+if earnNew
+    earnBars := 0
+    // Surprise = (actual - estimate) / |estimate|
+    if not na(earnEst) and math.abs(earnEst) > EPSILON
+        earnSurp := (earnAct - earnEst) / math.abs(earnEst)
+    else
+        // No estimate available — use price reaction as proxy
+        earnSurp := (close - open) > 0 ? 0.5 : -0.5
+    // Volume confirmation: use pre-computed vol_avg from §12 (global scope)
+    float earnVol = nz(volume)
+    earnVolMul := vol_avg > 0 ? math.min(earnVol / vol_avg, 3.0) : 1.0
+else
+    earnBars += 1
+
+// Post-Earnings Announcement Drift (PEAD):
+// Signal decays exponentially — strongest right after, fading over ERN_DECAY bars
+SignalScore sig_ern = SignalScore.new()
+if earnBars < ERN_DECAY and math.abs(earnSurp) > EPSILON
+    float decay = math.exp(-float(earnBars) / (float(ERN_DECAY) * 0.4))
+    float mag = f_clamp(math.abs(earnSurp) / ERN_SURP, 0.0, 1.0)
+    float dir = earnSurp > 0 ? 1.0 : -1.0
+    float score = dir * mag * decay
+    float conf = mag * math.min(earnVolMul / 2.0, 1.0) * decay
+    sig_ern := SignalScore.new(f_clamp(score, -1.0, 1.0), earnSurp, f_clamp(conf, 0.0, 1.0))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §14 — CROSS-ASSET CORRELATION (Renaissance: "single model across asset classes")
+//
+// Laufer: "a single model could draw on their vast trove of pricing data,
+// detecting correlation opportunities across various asset classes."
+// Up to 3 configurable instruments — each contributes a lead/lag signal.
+// Empty symbols are auto-skipped (graceful degradation).
+// ─────────────────────────────────────────────────────────────────────────────
+
+SignalScore sig_cor = SignalScore.new()
+
+// Symbol 1 — global scope ta.* + request.security
+float cor1Close = i_corOn and i_corSym != "" ? request.security(i_corSym, timeframe.period, close, lookahead = barmerge.lookahead_off) : na
+float cor1Ret   = not na(cor1Close) ? (cor1Close - cor1Close[1]) / math.max(cor1Close[1], EPSILON) : 0.0
+float cor1Lead  = nz(ta.correlation(cor1Ret[1], aut_ret, COR_LEN))
+float cor1Level = nz(ta.correlation(close, nz(cor1Close), COR_LEN))
+
+// Symbol 2 — global scope ta.* + request.security
+float cor2Close = i_corOn and i_corSym2 != "" ? request.security(i_corSym2, timeframe.period, close, lookahead = barmerge.lookahead_off) : na
+float cor2Ret   = not na(cor2Close) ? (cor2Close - cor2Close[1]) / math.max(cor2Close[1], EPSILON) : 0.0
+float cor2Lead  = nz(ta.correlation(cor2Ret[1], aut_ret, COR_LEN))
+float cor2Level = nz(ta.correlation(close, nz(cor2Close), COR_LEN))
+
+// Symbol 3 — global scope ta.* + request.security
+float cor3Close = i_corOn and i_corSym3 != "" ? request.security(i_corSym3, timeframe.period, close, lookahead = barmerge.lookahead_off) : na
+float cor3Ret   = not na(cor3Close) ? (cor3Close - cor3Close[1]) / math.max(cor3Close[1], EPSILON) : 0.0
+float cor3Lead  = nz(ta.correlation(cor3Ret[1], aut_ret, COR_LEN))
+float cor3Level = nz(ta.correlation(close, nz(cor3Close), COR_LEN))
+
+// Composite: average of all valid lead/lag scores
+if i_corOn
+    float corSum = 0.0
+    float corW   = 0.0
+    float corLvl = 0.0
+    float corCnf = 0.0
+    // Symbol 1
+    if i_corSym != "" and not na(cor1Close) and math.abs(cor1Lead) > 0.1
+        corSum += f_sigmoid(cor1Lead * cor1Ret * 100.0, 2.0)
+        corCnf += math.abs(cor1Lead)
+        corLvl += cor1Level
+        corW   += 1.0
+    // Symbol 2
+    if i_corSym2 != "" and not na(cor2Close) and math.abs(cor2Lead) > 0.1
+        corSum += f_sigmoid(cor2Lead * cor2Ret * 100.0, 2.0)
+        corCnf += math.abs(cor2Lead)
+        corLvl += cor2Level
+        corW   += 1.0
+    // Symbol 3
+    if i_corSym3 != "" and not na(cor3Close) and math.abs(cor3Lead) > 0.1
+        corSum += f_sigmoid(cor3Lead * cor3Ret * 100.0, 2.0)
+        corCnf += math.abs(cor3Lead)
+        corLvl += cor3Level
+        corW   += 1.0
+    if corW > 0
+        sig_cor := SignalScore.new(f_clamp(corSum / corW, -1.0, 1.0), corLvl / corW, corCnf / corW)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §14b — MACRO REGIME PROXY (Renaissance: economic indicators as statistical signals)
+//
+// "Renaissance staffers deduced that there is even more that influences
+// investments, including forces not readily apparent." — Zuckerman
+//
+// VIX + Bond yields + DXY as statistical proxies for market-wide risk appetite.
+// DXY added per BlackRock research: gold-DXY correlation ≈ -0.60 (2020-2025).
+// Rising DXY = risk-off (dollar smile right side) = bearish equities signal.
+// Treated as data signals, not fundamental analysis.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Global scope: request.security() + ta.* must run every bar
+float macVix   = i_macOn ? nz(request.security("CBOE:VIX", "D", close, lookahead = barmerge.lookahead_off)) : 0.0
+float macYield = i_macOn ? nz(request.security("TVC:US10Y", "D", close, lookahead = barmerge.lookahead_off)) : 0.0
+float macDxy   = i_macOn ? nz(request.security("TVC:DXY", "D", close, lookahead = barmerge.lookahead_off)) : 0.0
+
+// VIX Z-score: deviation from its own mean (global scope ta.*)
+float macVixMA = nz(ta.sma(macVix, MAC_LEN))
+float macVixSD = nz(ta.stdev(macVix, MAC_LEN))
+float macVixZ  = macVixSD > EPSILON ? (macVix - macVixMA) / macVixSD : 0.0
+
+// VIX slope: direction of fear (normalized by stdev)
+float macVixSl = nz(ta.ema(macVix, 5)) - nz(ta.ema(macVix, 14))
+float macVixSlSD = nz(ta.stdev(macVixSl, MAC_LEN))
+float macVixSlZ = macVixSlSD > EPSILON ? macVixSl / macVixSlSD : 0.0
+
+// Yield slope: direction of rates (risk-on when rising slowly, risk-off when dropping)
+float macYldSl = nz(ta.ema(macYield, 5)) - nz(ta.ema(macYield, 14))
+float macYldSlSD = nz(ta.stdev(macYldSl, MAC_LEN))
+float macYldSlZ = macYldSlSD > EPSILON ? macYldSl / macYldSlSD : 0.0
+
+// DXY slope: direction of dollar strength (rising = risk-off = bearish equities)
+float macDxySl = nz(ta.ema(macDxy, 5)) - nz(ta.ema(macDxy, 14))
+float macDxySlSD = nz(ta.stdev(macDxySl, MAC_LEN))
+float macDxySlZ = macDxySlSD > EPSILON ? macDxySl / macDxySlSD : 0.0
+
+SignalScore sig_mac = SignalScore.new()
+if i_macOn and macVix > 0.1 and bar_index > MAC_LEN
+    // VIX contrarian: high VIX Z = extreme fear = potential buy (Renaissance: fade panic)
+    float vixContra = -f_sigmoid(macVixZ, 1.5)
+    // VIX momentum: falling VIX = calming = bullish, rising = panic building = bearish
+    float vixMom = -f_sigmoid(macVixSlZ, 2.0)
+    // Yield direction: rising yields = economic confidence = bullish (moderate)
+    float yldDir = f_sigmoid(macYldSlZ, 1.5) * 0.6
+    // DXY direction: rising dollar = risk-off = bearish equities (inverted)
+    float dxyDir = -f_sigmoid(macDxySlZ, 1.5) * 0.5
+    // Cross-validation: majority vote of 3 directional signals (VIX, yield, DXY)
+    int cvAgree = 0
+    float cvRef = math.sign(vixContra)
+    if cvRef != 0
+        if math.sign(yldDir) == cvRef
+            cvAgree += 1
+        if math.sign(dxyDir) == cvRef
+            cvAgree += 1
+    // 2+ signals agree → strong confirmation, 0-1 → dampened
+    float crossVal = cvAgree >= 2 ? 1.25 : cvAgree >= 1 ? 1.0 : 0.85
+    // Composite: VIX dominant, yield + DXY supplementary
+    float macSc = (vixContra * 0.30 + vixMom * 0.25 + yldDir * 0.25 + dxyDir * 0.20) * crossVal
+    float macConf = f_clamp((math.abs(macVixZ) / 2.0 + math.abs(macYldSlZ) / 3.0 + math.abs(macDxySlZ) / 3.0) * 0.4, 0.0, 1.0)
+    sig_mac := SignalScore.new(f_clamp(macSc, -1.0, 1.0), macVixZ, macConf)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §16 — COMPOSITE SCORING
+//
+// Two layers (Renaissance methodology):
+// 1. Linear: Σ(score_i × baseWeight_i × regimeMult_i × adaptWeight_i) / Σw
+// 2. Multidimensional anomalies: cross-term interactions (Rev×Vol, Trd×H...)
+// ─────────────────────────────────────────────────────────────────────────────
+
+var array<float> adaptW = array.new_float(SIG_COUNT, 1.0)
+
+array<float> baseW = array.from(W_REV, W_TRD, W_SES, W_DJV, W_AUT, W_HUR, W_ENT, W_VOL, W_COR, W_ERN, W_MAC)
+array<SignalScore> signals = array.from(sig_rev, sig_trd, sig_ses, sig_djv,
+     sig_aut, sig_hur, sig_ent, sig_vol, sig_cor, sig_ern, sig_mac)
+
+float cmpTotW = 0.0
+float cmpWgtS = 0.0
+int   cmpBull = 0
+int   cmpBear = 0
+int   cmpAct  = 0
+
+for i = 0 to SIG_COUNT - 1
+    SignalScore sig = signals.get(i)
+    float bw = baseW.get(i)
+    if bw > 0 and sig.isActive()
+        float fw = bw * f_regMult(i) * adaptW.get(i)
+        cmpTotW += fw
+        cmpWgtS += sig.value * fw
+        cmpAct  += 1
+        if sig.value > 0.05
+            cmpBull += 1
+        else
+            if sig.value < -0.05
+                cmpBear += 1
+
+float composite = cmpTotW > 0 ? f_clamp(cmpWgtS / cmpTotW, -1.0, 1.0) : 0.0
+
+// Multidimensional anomalies (Zuckerman): "subtle, nuanced mathematical
+// relationships between various factors — what staffers call multidimensional
+// anomalies." These cross-terms detect when signals reinforce each other
+// beyond their individual contributions.
+//
+// Architecture: 9 cross-terms in 3 categories
+//   CONFIRMING  (5): same-direction signals amplify each other
+//   QUALITY     (2): entropy/volume gates validate signal reliability
+//   DAMPENING   (2): conflicting signals reduce composite confidence
+float mdBoost = 0.0
+
+// ——— CONFIRMING cross-terms ———
+// C1: Rev × Vol — reversion confirmed by volume activity
+if math.abs(sig_rev.value) > 0.1 and math.abs(sig_vol.value) > 0.1 and math.sign(sig_rev.value) == math.sign(sig_vol.value)
+    mdBoost += sig_rev.value * math.abs(sig_vol.value) * 0.15
+// C2: Trd × Hurst — trend confirmed by persistence (H > adaptive trending threshold)
+if math.abs(sig_trd.value) > 0.1 and sig_hur.raw > hurUpTh
+    mdBoost += sig_trd.value * (sig_hur.raw - 0.5) * 0.30
+// C3: DjV × Rev — pattern history confirms reversion direction
+if math.abs(sig_djv.value) > 0.1 and math.abs(sig_rev.value) > 0.1 and math.sign(sig_djv.value) == math.sign(sig_rev.value)
+    mdBoost += sig_djv.value * math.abs(sig_rev.value) * 0.15
+// C4: Trd × AutoCorr — trend confirmed by positive autocorrelation
+if math.abs(sig_trd.value) > 0.1 and math.abs(sig_aut.value) > 0.1 and math.sign(sig_trd.value) == math.sign(sig_aut.value)
+    mdBoost += sig_trd.value * math.abs(sig_aut.value) * 0.12
+// C5: Macro × Crisis — VIX panic + CRISIS regime = contrarian opportunity
+//     (Zuckerman: "investors overreact to stress" — Medallion 2008: +74.6%)
+if i_macOn and hmmCur == HMM_CRISIS and math.abs(sig_mac.value) > 0.1
+    mdBoost += sig_mac.value * 0.20
+
+// ——— QUALITY cross-terms ———
+// Q1: Rev × low Entropy — reversion in predictable (low-entropy) market
+//     (Shannon insight: low entropy = structured = tradeable patterns)
+if math.abs(sig_rev.value) > 0.1 and sig_ent.conf > 0.5
+    mdBoost += sig_rev.value * sig_ent.conf * 0.12
+// Q2: Trd × low Entropy — trend in predictable market = high-quality signal
+if math.abs(sig_trd.value) > 0.1 and sig_ent.conf > 0.5
+    mdBoost += sig_trd.value * sig_ent.conf * 0.10
+
+// ——— DAMPENING cross-terms ———
+// D1: Rev vs Trd conflict — disagreement signals regime transition
+//     (Velissaris 2010: dynamic combination requires conflict detection)
+if math.abs(sig_rev.value) > 0.15 and math.abs(sig_trd.value) > 0.15 and math.sign(sig_rev.value) != math.sign(sig_trd.value)
+    float conflictMag = math.min(math.abs(sig_rev.value), math.abs(sig_trd.value))
+    mdBoost -= conflictMag * 0.10
+// D2: Session anomaly without Volume confirmation — weak signal
+if math.abs(sig_ses.value) > 0.1 and math.abs(sig_vol.value) < 0.05
+    mdBoost -= math.abs(sig_ses.value) * 0.08
+
+// Blend: interactions add up to ~15% of composite magnitude
+composite := f_clamp(composite + mdBoost, -1.0, 1.0)
+
+int   confluence = cmpAct > 0 ? int(math.round(float(math.max(cmpBull, cmpBear)) / float(cmpAct) * 100.0)) : 0
+
+int tier = (math.abs(composite) >= THR_S ? TIER_S :
+     math.abs(composite) >= THR_A ? TIER_A :
+     math.abs(composite) >= THR_B ? TIER_B : TIER_C)
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §17 — MTF CONFIRMATION (auto-adaptive timeframe)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Auto-detect HTF: next major timeframe (no manual input needed)
+//   1m-5m → 1H, 15m-1H → 4H, 4H → D, D → W, W+ → M
+int chartSec = timeframe.in_seconds()
+string autoHTF = chartSec <= 300 ? "60" :
+     chartSec <= 3600 ? "240" :
+     chartSec <= 14400 ? "D" :
+     chartSec <= 86400 ? "W" : "M"
+
+// Safety: verify autoHTF is truly higher (should always be by construction)
+bool htfValid = timeframe.in_seconds(autoHTF) > chartSec
+
+f_htfScore() =>
+    float hR = -f_normalize((close - ta.sma(close, REV_LEN)) / math.max(ta.stdev(close, REV_LEN), EPSILON), REV_ZTHR)
+    float htfSlope = f_normSlope(close, TRD_LEN)
+    float htfER    = f_kaufmanER(close, TRD_LEN)
+    float hT = htfSlope > 0 ? htfER : -htfER
+    float w = W_REV + W_TRD
+    f_clamp((hR * W_REV + hT * W_TRD) / math.max(w, EPSILON), -1.0, 1.0)
+
+float htfScore = (i_mtfOn and htfValid ?
+     request.security(syminfo.tickerid, autoHTF, f_htfScore(), lookahead = barmerge.lookahead_off) : 0.0)
+
+bool mtfAligned = not i_mtfOn or not htfValid or na(htfScore) or
+     (math.sign(composite) == math.sign(htfScore) and math.abs(htfScore) >= MTF_MIN)
+
+int finalTier = tier
+if i_mtfOn and htfValid and not mtfAligned
+    finalTier := math.min(tier + 1, TIER_C)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §18 — SELF-CORRECTING TRACKER (with p < 0.01 significance gate)
+//
+// Signals that predict future returns are amplified; those that don't are
+// dampened. Renaissance only accepted signals with p-value < 0.01.
+// t-stat = |cr| × √(n-2) / √(1-cr²), threshold 2.576 for p < 0.01.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Signal history stored as matrix: rows = signals (SIG_COUNT), cols = time samples
+// New samples are appended by shifting columns left and writing to last col.
+var matrix<float> trkSH = matrix.new<float>(SIG_COUNT, 0, 0.0)
+var array<float> trkRH = array.new_float(0)
+var int trkCols = 0
+
+if i_trkOn and bar_index > 10
+    float fwdR = (close - close[5]) / math.max(close[5], EPSILON)
+    trkRH.push(fwdR)
+    if trkRH.size() > TRK_WIN
+        trkRH.shift()
+
+    array<float> delayed = array.from(
+         nz((sig_rev[5]).value), nz((sig_trd[5]).value), nz((sig_ses[5]).value),
+         nz((sig_djv[5]).value), nz((sig_aut[5]).value), nz((sig_hur[5]).value),
+         nz((sig_ent[5]).value), nz((sig_vol[5]).value), nz((sig_cor[5]).value),
+         nz((sig_ern[5]).value), nz((sig_mac[5]).value))
+
+    // Add new column to matrix
+    trkSH.add_col(trkSH.columns(), delayed)
+    trkCols += 1
+
+    // Trim oldest column if exceeding window
+    if trkCols > TRK_WIN
+        trkSH.remove_col(0)
+        trkCols -= 1
+
+    if trkRH.size() >= 20
+        int trkN = trkRH.size()
+        for i = 0 to SIG_COUNT - 1
+            // Extract row i as array for correlation
+            array<float> rowArr = trkSH.row(i)
+            float cr = f_pearsonArr(rowArr, trkRH, trkN)
+            // Significance test: t = |cr| × √(n-2) / √(1-cr²)
+            // Renaissance only accepted signals with p < 0.01
+            float tStat = math.abs(cr) * math.sqrt(math.max(float(trkN - 2), 1.0)) /
+                 math.sqrt(math.max(1.0 - cr * cr, EPSILON))
+            bool sigP = tStat >= TRK_TSIG
+            // Significant (p<0.01): full adaptation range [0.2, 2.0]
+            // Not significant: dampened toward neutral [0.5, 1.5]
+            float tgt = (sigP ?
+                 f_clamp(1.0 + cr, 0.2, 2.0) :
+                 f_clamp(1.0 + cr * 0.3, 0.5, 1.5))
+            adaptW.set(i, adaptW.get(i) + TRK_RATE * (tgt - adaptW.get(i)))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §19 — STATISTICAL VALIDATOR
+// ─────────────────────────────────────────────────────────────────────────────
+
+var array<float> valCH = array.new_float(0)
+var array<float> valRH = array.new_float(0)
+float statConf = 0.5
+
+if bar_index > 10
+    valCH.push(nz(composite[5]))
+    valRH.push(nz((close - close[5]) / math.max(nz(close[5], close), EPSILON)))
+    if valCH.size() > TRK_WIN
+        valCH.shift()
+    if valRH.size() > TRK_WIN
+        valRH.shift()
+    if valCH.size() >= 20
+        int hits = 0
+        int signaled = 0
+        int sN = valCH.size()
+        for i = 0 to sN - 1
+            if math.abs(valCH.get(i)) > 0.1
+                signaled += 1
+                if math.sign(valCH.get(i)) == math.sign(valRH.get(i))
+                    hits += 1
+        float hr = signaled > 0 ? float(hits) / float(signaled) : 0.5
+        float cc = f_pearsonArr(valCH, valRH, sN)
+        statConf := f_clamp(hr * 0.6 + (cc + 1.0) / 2.0 * 0.4, 0.0, 1.0)
+
+float finalComp = composite * (statConf >= 0.5 ? 1.0 : statConf / 0.5)
+
+// Confluence × Stability Amplifier (Renaissance: "multidimensional anomalies")
+// When multiple independent signals converge AND the HMM is confident about the
+// current regime, the signal is exponentially more reliable than any single factor.
+// Brown & Mercer's IBM insight: more confirming context → higher prediction accuracy.
+//   High conf + stable model → amplify (convergence bonus)
+//   Low conf + unstable model → dampen (conflicting signals in uncertain regime)
+float confStab = 1.0
+if confluence >= 70 and hmmStability >= 0.7
+    confStab := 1.0 + (float(confluence) / 100.0 - 0.5) * hmmStability * 0.4
+else
+    if confluence < 50 and hmmStability < 0.4
+        confStab := 0.85
+finalComp := finalComp * confStab
+
+// Warmup gate: all lookback-dependent modules need DJV_LOOK bars to stabilize
+bool warmup = bar_index >= DJV_LOOK
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §20 — VISUAL LAYER
+//
+// Multi-layer rendering: glow → midline → main → signal EMA
+// Momentum-aware coloring: acceleration brightens, deceleration dims
+// Dynamic gradient fill: intensity proportional to composite magnitude
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Regime background
+bgcolor(i_showBg ? color.new(f_hmmColor(hmmCur), 85) : na, title = "Regime BG")
+
+// ——— Acceleration detection (momentum-aware coloring) ———
+float absComp  = math.abs(finalComp)
+float compROC  = finalComp - nz(finalComp[1])
+bool  compAccel = (finalComp > 0 and compROC > 0) or (finalComp < 0 and compROC < 0)
+
+// Continuous HSV color: smooth gradient from bear → neutral → bull
+// (no discrete jumps — color "slides" proportionally to composite value)
+color baseC = finalComp >= 0 ?
+     color.from_gradient(finalComp, 0.0, 1.0, C_DIMGRAY, C_BULL) :
+     color.from_gradient(finalComp, -1.0, 0.0, C_BEAR, C_DIMGRAY)
+// Acceleration modulates transparency: vivid when accelerating, muted when decelerating
+int accelT = compAccel ?
+     int(math.max(20 - absComp * 18, 0)) :
+     int(math.max(50 - absComp * 20, 20))
+color mainC = color.new(baseC, accelT)
+
+// ——— Signal EMA (smoothed model output — Renaissance: filtered prediction) ———
+float compSig  = ta.ema(finalComp, 5)
+float compHist = finalComp - compSig
+
+// ——— Glow: 3-layer rendering (shadow → midline → crisp main) ———
+plot(finalComp, "Glow",      color.new(baseC, 88), 10)
+plot(finalComp, "Mid",       color.new(baseC, 65),  5)
+p1 = plot(finalComp, "Composite", mainC, 2)
+plot(compSig,   "Signal",    color.new(C_TEXTDIM, 45), 1)
+p0 = plot(0.0, "Zero", color.new(C_DIMGRAY, 50), 1)
+
+// ——— Volumetric multi-band fill (3D depth: intense near line, fading to zero) ———
+pB2 = plot(finalComp * 0.67, "Band2", na, display = display.none)
+pB3 = plot(finalComp * 0.33, "Band3", na, display = display.none)
+int dynBase = int(math.max(93 - absComp * 58, 35))
+fill(p1,  pB2, color.new(baseC, int(math.max(dynBase - 30, 15))), title = "Depth-Near")
+fill(pB2, pB3, color.new(baseC, int(math.max(dynBase - 15, 30))), title = "Depth-Mid")
+fill(pB3, p0,  color.new(baseC, dynBase),                         title = "Depth-Far")
+
+// ——— Multi-gradient histogram (continuous 10-level coloring) ———
+float absHist = math.abs(compHist)
+float histPow = f_clamp(absHist / 0.15, 0.0, 1.0)
+color histC = compHist > 0 ?
+     color.from_gradient(histPow, 0.0, 1.0, color.new(C_BULL, 80), color.new(C_BULL2, 10)) :
+     color.from_gradient(histPow, 0.0, 1.0, color.new(C_BEAR, 80), color.new(C_BEAR2, 10))
+plot(compHist * 0.5, "Histogram", histC, 1, plot.style_columns)
+
+// ——— Threshold zones (subtle band fills for Supreme tier) ———
+pSP = plot( THR_S, "+S", color.new(C_GOLD, 88), 1, plot.style_circles)
+pSN = plot(-THR_S, "-S", color.new(C_GOLD, 88), 1, plot.style_circles)
+pAP = plot( THR_A, "+A", na, 1, display = display.none)
+pAN = plot(-THR_A, "-A", na, 1, display = display.none)
+fill(pSP, pAP, color.new(C_GOLD, 93), title = "S-Zone+")
+fill(pSN, pAN, color.new(C_GOLD, 93), title = "S-Zone-")
+hline(0, "Zero", C_DIMGRAY, hline.style_dotted)
+
+// ——— Module traces (subtle depth — high transparency to avoid clutter) ———
+plot(sig_rev.value * 0.95, "MeanRev",  color.new(C_PURPLE, 82), 1)
+plot(sig_trd.value * 0.90, "Trend",    color.new(C_ACCENT, 82), 1)
+plot(sig_djv.value * 0.80, "DejaVu",   color.new(C_BULL2, 82),  1)
+plot(sig_vol.value * 0.75, "Volume",   color.new(C_LIME, 82),   1)
+plot(i_mtfOn and htfValid ? htfScore : na, "HTF", color.new(C_GOLD, 50), 1, plot.style_stepline)
+
+// ——— Right-edge plot name labels (EP: self-documenting oscillator) ———
+var label ln_comp = na
+var label ln_sig  = na
+var label ln_zero = na
+var label ln_rev  = na
+var label ln_trd  = na
+var label ln_djv  = na
+var label ln_vol  = na
+var label ln_htf  = na
+var label ln_sp   = na
+var label ln_sn   = na
+
+if i_plotNames and bar_index == last_bar_index
+    int xOff = bar_index + 3
+    label.delete(ln_comp)
+    ln_comp := label.new(xOff, finalComp,             "Composite", style = label.style_none, textcolor = color.new(baseC, 20),    size = size.tiny, textalign = text.align_left)
+    label.delete(ln_sig)
+    ln_sig  := label.new(xOff, compSig,              "Signal",    style = label.style_none, textcolor = color.new(C_TEXTDIM, 30), size = size.tiny, textalign = text.align_left)
+    label.delete(ln_zero)
+    ln_zero := label.new(xOff, 0.0,                  "Zero",      style = label.style_none, textcolor = color.new(C_DIMGRAY, 30), size = size.tiny, textalign = text.align_left)
+    label.delete(ln_rev)
+    ln_rev  := label.new(xOff, sig_rev.value * 0.95, "MeanRev",   style = label.style_none, textcolor = color.new(C_PURPLE, 40),  size = size.tiny, textalign = text.align_left)
+    label.delete(ln_trd)
+    ln_trd  := label.new(xOff, sig_trd.value * 0.90, "Trend",     style = label.style_none, textcolor = color.new(C_ACCENT, 40),  size = size.tiny, textalign = text.align_left)
+    label.delete(ln_djv)
+    ln_djv  := label.new(xOff, sig_djv.value * 0.80, "DejaVu",    style = label.style_none, textcolor = color.new(C_BULL2, 40),   size = size.tiny, textalign = text.align_left)
+    label.delete(ln_vol)
+    ln_vol  := label.new(xOff, sig_vol.value * 0.75, "Volume",    style = label.style_none, textcolor = color.new(C_LIME, 40),    size = size.tiny, textalign = text.align_left)
+    label.delete(ln_htf)
+    if i_mtfOn and htfValid
+        ln_htf := label.new(xOff, htfScore,          "HTF",       style = label.style_none, textcolor = color.new(C_GOLD, 30),    size = size.tiny, textalign = text.align_left)
+    label.delete(ln_sp)
+    ln_sp   := label.new(xOff,  THR_S,               "+S",        style = label.style_none, textcolor = color.new(C_GOLD, 50),    size = size.tiny, textalign = text.align_left)
+    label.delete(ln_sn)
+    ln_sn   := label.new(xOff, -THR_S,               "−S",        style = label.style_none, textcolor = color.new(C_GOLD, 50),    size = size.tiny, textalign = text.align_left)
+
+// ——— Signal markers (layered glow: large transparent → small vivid) ———
+bool longSig  = finalComp >  THR_B and finalComp[1] <=  THR_B
+bool shortSig = finalComp < -THR_B and finalComp[1] >= -THR_B
+bool sL = finalComp >=  THR_S and not (finalComp[1] >= THR_S)
+bool sS = finalComp <= -THR_S and not (finalComp[1] <= -THR_S)
+
+// B+ signals: glow circle behind + crisp triangle
+plotshape(longSig,  "L-Glow",  shape.circle,     location.bottom, color.new(C_BULL, 70), size = size.normal)
+plotshape(longSig,  "Long",    shape.triangleup,  location.bottom, C_BULL, size = size.tiny)
+plotshape(shortSig, "S-Glow",  shape.circle,      location.top,    color.new(C_BEAR, 70), size = size.normal)
+plotshape(shortSig, "Short",   shape.triangledown, location.top,   C_BEAR, size = size.tiny)
+
+// Supreme signals: premium glow (larger + brighter) + diamond
+plotshape(sL, "SL-Glow", shape.circle,  location.bottom, color.new(C_GOLD, 60), size = size.large)
+plotshape(sL, "S-Long",  shape.diamond, location.bottom, C_GOLD, size = size.normal)
+plotshape(sS, "SS-Glow", shape.circle,  location.top,    color.new(C_GOLD, 60), size = size.large)
+plotshape(sS, "S-Short", shape.diamond, location.top,    C_GOLD, size = size.normal)
+
+// Crossover dots on the composite line (visual anchor)
+plot(longSig ? finalComp : na, "L-Dot", C_BULL, 4, plot.style_circles)
+plot(shortSig ? finalComp : na, "S-Dot", C_BEAR, 4, plot.style_circles)
+
+// Candle coloring (works on main chart even from oscillator pane)
+barcolor(i_barColor ?
+     (finalComp > 0.05 ? color.new(C_BULL, int(math.max(75 - absComp * 65, 10))) :
+      finalComp < -0.05 ? color.new(C_BEAR, int(math.max(75 - absComp * 65, 10))) : na) : na,
+     title = "Candles")
+
+// Labels (micro-dashboard: tier + score + confluence + regime)
+if i_showLabels and longSig and finalTier <= TIER_B
+    string lTxt = f_tierName(finalTier) + " " + str.tostring(finalComp, "#.00") +
+         "\n" + str.tostring(confluence) + "% · " + f_hmmName(hmmCur)
+    label.new(bar_index, finalComp, lTxt,
+         color = color.new(f_tierColor(finalTier), 15), textcolor = C_BG,
+         style = label.style_label_up, size = size.small)
+if i_showLabels and shortSig and finalTier <= TIER_B
+    string sTxt = f_tierName(finalTier) + " " + str.tostring(finalComp, "#.00") +
+         "\n" + str.tostring(confluence) + "% · " + f_hmmName(hmmCur)
+    label.new(bar_index, finalComp, sTxt,
+         color = color.new(f_tierColor(finalTier), 15), textcolor = C_BG,
+         style = label.style_label_down, size = size.small)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §21 — DASHBOARD (Premium institutional panel)
+// ─────────────────────────────────────────────────────────────────────────────
+
+var table dash = na
+
+if i_showDash
+    if na(dash)
+        dash := table.new(position.top_right, 4, 30, C_BG, color.new(C_DIMGRAY, 80), 1, color.new(C_DIMGRAY, 80), 1)
+    int r = 0
+    string dSz = i_dashSize == "Tiny" ? size.tiny : i_dashSize == "Small" ? size.small : size.normal
+
+    // ——— Header band ———
+    string hIcon = not warmup ? "⏳" : finalComp > 0.05 ? "▲" : finalComp < -0.05 ? "▼" : "●"
+    color  hBg   = warmup ? C_ACCENT : C_DIMGRAY
+    table.cell(dash, 0, r, "◆  MEDALLION CIPHER  " + hIcon, text_color = C_BG,
+         text_size = dSz, bgcolor = hBg, text_halign = text.align_center,
+         tooltip = "11-module composite analysis inspired by Renaissance Technologies. ⏳ = warming up, ▲ = bullish, ▼ = bearish, ● = neutral.")
+    table.merge_cells(dash, 0, r, 3, r)
+    r += 1
+
+    // ——— Composite score ———
+    color scBg = color.new(f_scoreColor(finalComp), int(math.max(88 - absComp * 45, 40)))
+    table.cell(dash, 0, r, "Score", text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_left,
+         tooltip = "Combined directional score from all active modules. Ranges from -1.0 (strong bearish) to +1.0 (strong bullish).")
+    table.cell(dash, 1, r, f_fmtScore(finalComp), text_color = f_scoreColor(finalComp),
+         text_size = dSz, text_halign = text.align_right, bgcolor = scBg)
+    string dirStr = finalComp > 0.05 ? "▲ LONG" : finalComp < -0.05 ? "▼ SHORT" : "● FLAT"
+    table.cell(dash, 2, r, dirStr, text_color = f_scoreColor(finalComp), text_size = dSz, text_halign = text.align_right)
+    string tierStr = finalTier == TIER_S ? "◆ SUPREME" : finalTier == TIER_A ? "■ STRONG" : finalTier == TIER_B ? "● MODERATE" : "○ WEAK"
+    table.cell(dash, 3, r, tierStr, text_color = f_tierColor(finalTier), text_size = dSz,
+         text_halign = text.align_center, bgcolor = color.new(f_tierColor(finalTier), 82),
+         tooltip = "Signal quality tier. Supreme = very high conviction. Strong = clear direction. Moderate = actionable. Weak = below signal threshold.")
+    r += 1
+
+    // ——— Confluence ———
+    color confBg = color.new(confluence >= 70 ? C_BULL : confluence >= 50 ? C_AMBER : C_GRAY,
+         int(math.max(90 - confluence * 0.5, 50)))
+    table.cell(dash, 0, r, "Confluence", text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_left,
+         tooltip = "Percentage of active modules agreeing on the same direction. Higher = more reliable signal. Required minimum for alerts is set in Modules settings.")
+    table.cell(dash, 1, r, str.tostring(confluence) + "%",
+         text_color = confluence >= 70 ? C_BULL : confluence >= 50 ? C_AMBER : C_GRAY,
+         text_size = dSz, text_halign = text.align_right, bgcolor = confBg)
+    table.cell(dash, 2, r, str.tostring(cmpAct) + "/" + str.tostring(SIG_COUNT),
+         text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_right,
+         tooltip = "Number of active modules contributing to the score out of 11 total.")
+    table.cell(dash, 3, r, "", text_size = dSz)
+    r += 1
+
+    // ——— Separator: Signals ———
+    table.cell(dash, 0, r, "SIGNALS", text_color = C_ACCENT, text_size = dSz,
+         text_halign = text.align_center, bgcolor = color.new(C_ACCENT, 90))
+    table.merge_cells(dash, 0, r, 3, r)
+    r += 1
+
+    // ——— Signal rows (with dynamic bgcolor + icons) ———
+    array<string> sNames = array.from("MeanRev", "Trend", "Session", "DejaVu", "AutoCorr",
+         "Hurst", "Entropy", "Volume", "Corr", "Earnings", "Macro")
+    array<string> sTips = array.from(
+         "Statistical reversion: detects when price deviates from its average and is likely to snap back.",
+         "Directional momentum: measures slope and acceleration of price movement.",
+         "Time-of-day and day-of-week patterns. Captures recurring intraday and weekly seasonality.",
+         "Pattern recognition: scans historical data for similar price sequences and predicts what comes next.",
+         "Serial dependence: detects whether recent returns predict upcoming returns (market memory).",
+         "Persistence detector: above 0.5 = trending market, below 0.5 = mean-reverting. Adapts per instrument.",
+         "Market predictability: low entropy = structured patterns (exploitable), high = random noise.",
+         "Trade activity analysis: confirms whether price moves are backed by institutional participation.",
+         "Cross-market signals: detects lead/lag relationships with configured reference instruments.",
+         "Post-announcement drift: price tends to continue moving in the direction of an earnings surprise.",
+         "Market-wide risk sentiment derived from VIX, bond yields, and the Dollar Index.")
+
+    for i = 0 to SIG_COUNT - 1
+        if baseW.get(i) > 0
+            SignalScore sig = signals.get(i)
+            float aw = adaptW.get(i)
+            color  sBg = color.new(sig.dirColor(), int(math.max(92 - math.abs(sig.value) * 40, 55)))
+            color  cBg = color.new(C_ACCENT, int(math.max(95 - sig.conf * 40, 60)))
+            table.cell(dash, 0, r, sig.dirIcon() + " " + sNames.get(i), text_color = sig.dirColor(), text_size = dSz, text_halign = text.align_left,
+                 tooltip = sTips.get(i))
+            table.cell(dash, 1, r, sig.fmtValue(), text_color = sig.dirColor(),
+                 text_size = dSz, text_halign = text.align_right, bgcolor = sBg,
+                 tooltip = "Module score: ranges from -1.0 (bearish) to +1.0 (bullish).")
+            table.cell(dash, 2, r, str.tostring(sig.conf * 100, "#") + "%",
+                 text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_right, bgcolor = cBg,
+                 tooltip = "Signal confidence: how reliable this module's reading is on this bar.")
+            table.cell(dash, 3, r, str.tostring(aw, "#.00") + "x",
+                 text_color = aw > 1.1 ? C_BULL : aw < 0.9 ? C_BEAR : C_TEXTDIM,
+                 text_size = dSz, text_halign = text.align_right,
+                 bgcolor = color.new(aw > 1.1 ? C_BULL : aw < 0.9 ? C_BEAR : C_BG, aw > 1.1 or aw < 0.9 ? 88 : 100),
+                 tooltip = "Adaptive weight: auto-adjusted based on measured accuracy. Above 1.0 = amplified, below 1.0 = dampened.")
+            r += 1
+
+    // ——— Separator: Meta ———
+    table.cell(dash, 0, r, "ENGINE", text_color = C_ACCENT, text_size = dSz,
+         text_halign = text.align_center, bgcolor = color.new(C_ACCENT, 90))
+    table.merge_cells(dash, 0, r, 3, r)
+    r += 1
+
+    // ——— Regime ———
+    color regBg = color.new(f_hmmColor(hmmCur), int(math.max(78 - hmmStability * 20, 55)))
+    string regWarn = hmmStability < 0.5 ? " ⚡" : ""
+    table.cell(dash, 0, r, "Regime", text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_left,
+         tooltip = "Market state detected by the adaptive model. Bull, Bear, Range, or Crisis. ⚡ = regime is unstable, transition likely.")
+    table.cell(dash, 1, r, f_hmmName(hmmCur) + regWarn, text_color = f_hmmColor(hmmCur), text_size = dSz,
+         text_halign = text.align_right, bgcolor = regBg)
+    table.cell(dash, 2, r, str.tostring(hmmAlpha.get(hmmCur) * 100, "#") + "%",
+         text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_right, bgcolor = regBg,
+         tooltip = "Probability that the market is in this regime right now.")
+    color stabClr = hmmStability >= 0.7 ? C_BULL : hmmStability >= 0.4 ? C_AMBER : C_BEAR
+    table.cell(dash, 3, r, "S " + str.tostring(hmmStability * 100, "#") + "%",
+         text_color = stabClr, text_size = dSz, text_halign = text.align_right,
+         tooltip = "Regime stability: 100% = the model is very certain, 0% = maximum uncertainty between states.")
+    r += 1
+
+    // ——— Hurst ———
+    if i_hurOn
+        float hv = sig_hur.raw
+        bool hurWarm = hv >= 0.01
+        string hIcon2 = not hurWarm ? "○" : hv > hurUpTh ? "▲" : hv < hurFlipTh ? "▼" : "●"
+        string hLabel = not hurWarm ? "Warmup" : hv > hurUpTh ? "Trending" : hv < hurFlipTh ? "Reverting" : "Random"
+        color  hClr = not hurWarm ? C_DIMGRAY : hv > hurUpTh ? C_ACCENT : hv < hurFlipTh ? C_PURPLE : C_GRAY
+        table.cell(dash, 0, r, "Hurst", text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_left,
+             tooltip = "Hurst exponent from R/S analysis. Trending (above 0.5), Random (around 0.5), or Reverting (below 0.5). Thresholds adapt to each instrument.")
+        table.cell(dash, 1, r, hurWarm ? str.tostring(hv, "#.00") : "—",
+             text_color = hClr, text_size = dSz, text_halign = text.align_right)
+        table.cell(dash, 2, r, hIcon2 + " " + hLabel, text_color = hClr, text_size = dSz, text_halign = text.align_right)
+        table.cell(dash, 3, r, "", text_size = dSz)
+        r += 1
+
+    // ——— HTF ———
+    if i_mtfOn
+        string alStr = mtfAligned ? "● Aligned" : "▼ Divergent"
+        color  alClr = mtfAligned ? C_BULL : C_BEAR
+        table.cell(dash, 0, r, "HTF " + autoHTF, text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_left,
+             tooltip = "Higher-timeframe directional filter. Automatically selected based on your chart interval. When the bigger picture disagrees, the signal tier is demoted.")
+        table.cell(dash, 1, r, htfValid ? f_fmtScore(htfScore) : "—",
+             text_color = htfValid ? f_scoreColor(htfScore) : C_DIMGRAY,
+             text_size = dSz, text_halign = text.align_right)
+        table.cell(dash, 2, r, alStr, text_color = alClr, text_size = dSz, text_halign = text.align_right,
+             bgcolor = color.new(alClr, 88),
+             tooltip = "Aligned = HTF confirms the signal direction. Divergent = HTF disagrees, signal tier demoted.")
+        table.cell(dash, 3, r, "", text_size = dSz)
+        r += 1
+
+    // ——— Confidence ———
+    color stcBg = color.new(statConf >= 0.5 ? C_BULL : C_BEAR, int(math.max(92 - statConf * 40, 55)))
+    table.cell(dash, 0, r, "Confidence", text_color = C_TEXTDIM, text_size = dSz, text_halign = text.align_left,
+         tooltip = "Statistical confidence that the composite score correctly predicts future price direction. Based on recent hit rate and correlation with actual outcomes.")
+    table.cell(dash, 1, r, str.tostring(statConf * 100, "#.0") + "%",
+         text_color = statConf >= 0.5 ? C_BULL : C_BEAR, text_size = dSz, text_halign = text.align_right, bgcolor = stcBg)
+    table.cell(dash, 2, r, "", text_size = dSz)
+    table.cell(dash, 3, r, "", text_size = dSz)
+    r += 1
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §22 — ALERTS (alertcondition — user configures in TradingView Alerts dialog)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Signal alerts (confluence-gated)
+alertcondition(longSig and finalTier <= TIER_B and confluence >= i_minConfl,
+     "Long Signal B+", "MC: Long Signal B+")
+alertcondition(shortSig and finalTier <= TIER_B and confluence >= i_minConfl,
+     "Short Signal B+", "MC: Short Signal B+")
+
+// Supreme alerts (always fire — supreme signals are highest conviction)
+alertcondition(sL, "SUPREME Long",  "MC: SUPREME Long")
+alertcondition(sS, "SUPREME Short", "MC: SUPREME Short")
+
+// Engine alerts
+alertcondition(hmmChanged, "Regime Change", "MC: Regime Change")
+alertcondition(confluence >= 80 and nz(confluence[1]) < 80,
+     "Confluence ≥ 80%", "MC: High Confluence")
+
+// Bias alerts
+alertcondition(finalComp > 0 and nz(finalComp[1]) <= 0,
+     "Bullish Zero-Cross", "MC: Composite crossed above zero")
+alertcondition(finalComp < 0 and nz(finalComp[1]) >= 0,
+     "Bearish Zero-Cross", "MC: Composite crossed below zero")
+
+// Persistence alert (Hurst regime shift)
+alertcondition(i_hurOn and hurRaw < hurFlipTh and nz(hurRaw[1]) >= hurFlipTh,
+     "Hurst → Reverting", "MC: Market shifted from trending to mean-reverting")
+
+// System alert
+alertcondition(bar_index == DJV_LOOK,
+     "Warmup Complete", "MC: All modules active")
