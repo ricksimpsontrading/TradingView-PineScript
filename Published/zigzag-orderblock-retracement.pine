@@ -1,7 +1,11 @@
-// This Pine Script™ code is subject to the terms of the ZigZag OrderBlock Retracement License Agreement.
-// Unauthorized copying, modification, distribution, or use of this code, via any medium, is strictly prohibited.
-// License Agreement is available at: https://ricksimpsontrading.com/license
-// © 2024 RickSimpson. All Rights Reserved.
+// This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+// International License (CC BY-NC-SA 4.0): https://creativecommons.org/licenses/by-nc-sa/4.0/
+// You may share and adapt it for non-commercial purposes, with attribution, under the
+// same license. Creative Commons does not recommend its licenses for software; this
+// choice is deliberate for a published trading script whose terms are set by its
+// author, and it does not replace TradingView's own rules (House Rules, publishing
+// rules, script moderation), which apply in addition.
+// © 2024 RickSimpson
 //
 // ZigZag OrderBlock Retracement
 // Version: 2.0.0

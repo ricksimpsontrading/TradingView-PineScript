@@ -1,5 +1,10 @@
-// This work is licensed under Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)
-// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// This work is licensed under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0
+// International License (CC BY-NC-SA 4.0): https://creativecommons.org/licenses/by-nc-sa/4.0/
+// You may share and adapt it for non-commercial purposes, with attribution, under the
+// same license. Creative Commons does not recommend its licenses for software; this
+// choice is deliberate for a published trading script whose terms are set by its
+// author, and it does not replace TradingView's own rules (House Rules, publishing
+// rules, script moderation), which apply in addition.
 // © RickSimpson — Ichimoku Kinko Hyo (一目均衡表)
 // Based on the work of Goichi Hosoda (細田悟一), 1935
 

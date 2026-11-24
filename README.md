@@ -10,6 +10,12 @@ My Pine Script code for TradingView: indicators and strategies.
 | [Work-in-progress](Work-in-progress/) | Scripts under active development |
 | [Experimental](Experimental/) | Ideas, prototypes and tests |
 
+## Licensing
+
+All seven current Pine Script files in [Published](Published/) and [Work-in-progress](Work-in-progress/) are offered under the [Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License (CC BY-NC-SA 4.0)](https://creativecommons.org/licenses/by-nc-sa/4.0/), as stated in their individual headers.
+
+You may share and adapt these scripts for non-commercial purposes, with attribution and under the same licence. TradingView's own rules apply in addition. This is not a blanket licence for other repository content or future scripts. Previously granted licences, including the MPL 2.0 grant for earlier Medallion Cipher revisions, remain subject to their original terms; this change does not revoke those grants.
+
 ## Script lifecycle
 
 ```
